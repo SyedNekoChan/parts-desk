@@ -490,7 +490,7 @@ function readableError(status, payload){
   if (status === 404)
     return "That model name wasn't found. Pick another one in Settings.";
   if (status === 413)
-    return `That request was too large for Groq to accept${msg ? ` (Groq said: "${msg}")` : ""}. This app guards against the usual causes — an oversized House style field, a pasted block of text mistaken for a part number, or an unusually long research result — and now also limits the search step to snippets rather than full pages. If you're still seeing this, it's worth reporting which part number triggered it.`;
+    return `That request was too large for this model to accept${msg ? ` (Groq said: "${msg}")` : ""}. Groq's free-tier per-model token limits vary a lot — this is usually a specific model's ceiling on a single request rather than anything about what you typed, and the app tries an alternate model automatically before giving up.`;
   return `API error ${status}. ${msg}`;
 }
 
@@ -563,14 +563,22 @@ async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, rememb
     } catch (e){
       if (e.name === "AbortError") throw e;
       tried.push(model);
-      if (e._status === 404){ lastErr = e; continue; }
+      // 404 means the model itself is gone. 413 often isn't really about
+      // byte size — Groq's free-tier per-model tokens-per-minute ceiling
+      // varies a lot (8,000 on gpt-oss-20b vs 12,000 on llama-3.3-70b, for
+      // instance), and a single well-filled request can exceed a tight
+      // one outright. The sibling model may simply have more headroom, so
+      // it's worth trying before giving up on either code.
+      if (e._status === 404 || e._status === 413){ lastErr = e; continue; }
       throw e;
     }
   }
 
-  throw new Error(
-    `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
-    `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
+  const status413 = lastErr?._status === 413;
+  throw new Error(status413
+    ? `Even the shorter model couldn't fit this one under its free-tier token limit (${tried.join(", ")} both hit it). This is usually a one-off on an unusually well-documented part — try running it again on its own.`
+    : `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
+      `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
   );
 }
 
@@ -745,9 +753,13 @@ async function research(part, opts, onNote, signal){
   // A search or visit-website tool can occasionally return a large chunk of
   // raw page text, and if the model echoes much of that into its answer,
   // the brief can be far bigger than a "brief" should be. Cap it before it
-  // goes into the next request — otherwise a single oversized listing can
-  // trip Groq's request-size limit (413) on the formatting step.
-  const MAX_BRIEF_CHARS = 8000;
+  // goes into the next request. This also matters for a reason beyond raw
+  // size: the format step's model (openai/gpt-oss-20b) has only an 8,000
+  // tokens-per-minute ceiling on Groq's free tier — the tightest of any
+  // model this app uses — and prompt tokens plus the completion budget
+  // both count against that ceiling in a single request. Keeping the
+  // brief modest leaves real headroom instead of nearly maxing it out.
+  const MAX_BRIEF_CHARS = 4000;
   if (brief.length > MAX_BRIEF_CHARS){
     brief = brief.slice(0, MAX_BRIEF_CHARS) + "\n\n[Brief truncated — the research step returned more text than expected.]";
     onNote({ text:"The research came back unusually long and was trimmed before writing the listing." });
@@ -760,7 +772,7 @@ async function research(part, opts, onNote, signal){
   const { payload: formatted, model: usedFormatModel } = await callGroqAuto(settings.formatModel, FORMAT_MODELS, {
     messages:[{ role:"user", content: formatPrompt(part, opts, brief) }],
     temperature:0.3,
-    max_tokens:2500,
+    max_tokens:1400, // a title, five bullets, description and specs fit comfortably well under this
     response_format:{ type:"json_object" }
   }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingFormatModel });
 
@@ -829,7 +841,7 @@ Return only the rewritten ${field}, with no preamble and no quotation marks arou
 ---
 ${value}` }],
     temperature:0.3,
-    max_tokens:2000
+    max_tokens:800 // the output is meant to be shorter than the input, so this is already generous
   }, { remembered: lastWorkingFormatModel });
   lastWorkingFormatModel = model;
   return textOf(payload).trim();
