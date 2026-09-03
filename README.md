@@ -77,6 +77,8 @@ Gemini 2.5 Flash is a small, fast model. On common parts it does this job well. 
 
 ## Troubleshooting
 
+**"That model name wasn't found" / a red "Didn't finish" box naming a model.** This isn't something wrong with your setup — Google reshuffles which models are available on the free tier fairly often, and occasionally one alias goes dead for a few hours while its sibling stays fine. The app now handles this itself: if your chosen model 404s, it automatically retries with the other free-and-grounded model before giving up, and it remembers whichever one worked so the rest of your batch doesn't pay the same price twice. You'll see a small note in the run log when this happens. If you still get an error after that, open **Settings → Check available models** — it asks Google directly which models your key can reach right now and shows you the real list, rather than the app guessing. Google is scheduled to retire the Gemini 2.5 models on **October 16, 2026**; if you're reading this after that date, the model options in Settings will need updating to whatever replaced them.
+
 **"That API key isn't valid."** Copied wrong, or the key was deleted. Make a new one.
 
 **"The key is restricted and this site isn't on its allowed list."** The key has an HTTP-referrer restriction in Google Cloud Console that doesn't include your GitHub Pages address. Add `https://<your-username>.github.io/*` to the allowed referrers, or remove the restriction.
