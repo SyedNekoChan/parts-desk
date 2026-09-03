@@ -302,8 +302,8 @@
         <legend>Listing rules</legend>
         <div class="field" style="margin-top:8px">
           <label for="s-rules">House style</label>
-          <textarea id="s-rules" rows="5" spellcheck="false"></textarea>
-          <div class="hint">Anything your listings always need: wording to avoid, a warranty line, how to phrase compatibility.</div>
+          <textarea id="s-rules" rows="5" spellcheck="false" maxlength="3000"></textarea>
+          <div class="hint">Anything your listings always need: wording to avoid, a warranty line, how to phrase compatibility. A few sentences is plenty — this gets added to every single listing request, so keep it short (capped at 3,000 characters).</div>
         </div>
         <div class="duo">
           <div class="field">
@@ -478,6 +478,8 @@ function readableError(status, payload){
     return "Groq's servers are busy. Trying again in a moment usually clears it.";
   if (status === 404)
     return "That model name wasn't found. Pick another one in Settings.";
+  if (status === 413)
+    return "That request was too large for Groq to accept. This app now guards against the usual cause — a pasted line that isn't really a part number — but if you're still seeing this, check your House style text in Settings isn't unusually long, and check the part number list for anything that looks like a paragraph rather than a short code.";
   return `API error ${status}. ${msg}`;
 }
 
@@ -714,13 +716,24 @@ async function research(part, opts, onNote, signal){
   lastWorkingSearchModel = usedSearchModel;
   bumpQuota();
 
-  const brief = textOf(payload).trim();
+  let brief = textOf(payload).trim();
   const grounding = groundingOf(payload);
 
   if (!brief){
     throw new Error(finishedCleanly(payload)
       ? "The research step came back empty. Try running this part number again."
       : `The research step stopped early (${payload?.choices?.[0]?.finish_reason}). Try running this part number again.`);
+  }
+
+  // A search or visit-website tool can occasionally return a large chunk of
+  // raw page text, and if the model echoes much of that into its answer,
+  // the brief can be far bigger than a "brief" should be. Cap it before it
+  // goes into the next request — otherwise a single oversized listing can
+  // trip Groq's request-size limit (413) on the formatting step.
+  const MAX_BRIEF_CHARS = 8000;
+  if (brief.length > MAX_BRIEF_CHARS){
+    brief = brief.slice(0, MAX_BRIEF_CHARS) + "\n\n[Brief truncated — the research step returned more text than expected.]";
+    onNote({ text:"The research came back unusually long and was trimmed before writing the listing." });
   }
 
   if (grounding.queries.length) onNote({ queries: grounding.queries });
@@ -810,14 +823,31 @@ ${value}` }],
    ============================================================ */
 
 
+const MAX_PART_LENGTH = 40; // real part numbers are short alphanumeric codes; anything longer is almost certainly a mis-paste
+
 function parsePartNumbers(raw){
   // Strips list markers ("- ", "3) ") without touching part numbers
   // that legitimately begin with a digit, such as 0X8DXD.
   return raw.split(/[\n,;]+/)
     .map(s => s.trim().replace(/^(?:[-*•]|\d{1,3}[.)])\s+/, "").trim())
     .filter(Boolean)
+    .filter(s => s.length <= MAX_PART_LENGTH) // drop anything that's clearly not a part number — see below
     .filter((v,i,a) => a.indexOf(v) === i)
     .slice(0, 60);
+}
+
+/* Separately counts entries that got dropped for being too long, so the
+   caller can warn rather than silently losing whatever the person pasted.
+   A single line over ~40 characters is essentially never a real part
+   number — it's almost always a paragraph or a whole pasted block that
+   landed on one line, and sending that straight into a prompt is exactly
+   what trips Groq's "413 Request Entity Too Large" response. */
+function oversizedPartCount(raw){
+  return raw.split(/[\n,;]+/)
+    .map(s => s.trim().replace(/^(?:[-*•]|\d{1,3}[.)])\s+/, "").trim())
+    .filter(Boolean)
+    .filter(s => s.length > MAX_PART_LENGTH)
+    .length;
 }
 
 async function runQueue(){
@@ -829,8 +859,18 @@ async function runQueue(){
     return;
   }
 
-  const parts = parsePartNumbers($("parts").value);
-  if (!parts.length){ toast("Enter at least one part number."); return; }
+  const raw = $("parts").value;
+  const parts = parsePartNumbers(raw);
+  const dropped = oversizedPartCount(raw);
+  if (!parts.length){
+    toast(dropped > 0
+      ? `Every line was over ${MAX_PART_LENGTH} characters — that's too long to be a real part number. Paste part numbers, not a block of text.`
+      : "Enter at least one part number.");
+    return;
+  }
+  if (dropped > 0){
+    toast(`Skipped ${dropped} line${dropped === 1 ? "" : "s"} over ${MAX_PART_LENGTH} characters — too long to be a real part number.`);
+  }
 
   if (quota.n + parts.length > GROUNDED_PER_DAY){
     const left = Math.max(0, GROUNDED_PER_DAY - quota.n);
@@ -1248,7 +1288,7 @@ $("settings").addEventListener("close", () => {
   settings.formatModel = $("s-format-model").value;
   settings.gapSeconds = Math.min(60, Math.max(0, +$("s-gap").value || 0));
   settings.retries = Math.min(8, Math.max(0, +$("s-retries").value || 0));
-  settings.rules = $("s-rules").value;
+  settings.rules = $("s-rules").value.slice(0, 3000);
   settings.titleMax = Math.max(60, +$("s-title-max").value || 200);
   settings.descMax = Math.max(200, +$("s-desc-max").value || 2000);
   settings.pnInTitle = $("s-pn-title").checked;
