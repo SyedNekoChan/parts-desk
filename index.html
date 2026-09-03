@@ -379,6 +379,17 @@ const DEFAULTS = {
 };
 let settings = Object.assign({}, DEFAULTS);
 try { Object.assign(settings, JSON.parse(store.get("pd.settings") || "{}")); } catch {}
+
+// A value saved before the 3,000-character cap existed (or edited by hand)
+// would otherwise sit in storage forever, uncapped, until someone happened
+// to re-open Settings and hit Save. Normalize it every time the app loads
+// instead, so a stale oversized value can't keep tripping Groq's 413.
+const RULES_MAX_CHARS = 3000;
+if (typeof settings.rules === "string" && settings.rules.length > RULES_MAX_CHARS){
+  settings.rules = settings.rules.slice(0, RULES_MAX_CHARS);
+  store.set("pd.settings", JSON.stringify(settings));
+}
+
 function saveSettings(){ store.set("pd.settings", JSON.stringify(settings)); }
 
 /* ---------- counters ----------
@@ -690,7 +701,7 @@ function formatPrompt(part, opts, brief){
   if (settings.rules && settings.rules.trim()){
     lines.push("");
     lines.push(`House rules from the operator. These override the guidance above where they conflict:`);
-    lines.push(settings.rules.trim());
+    lines.push(settings.rules.trim().slice(0, RULES_MAX_CHARS));
   }
   lines.push("");
   lines.push(`Count the characters of the title and description before answering, and shorten them if they run over.`);
@@ -1288,7 +1299,7 @@ $("settings").addEventListener("close", () => {
   settings.formatModel = $("s-format-model").value;
   settings.gapSeconds = Math.min(60, Math.max(0, +$("s-gap").value || 0));
   settings.retries = Math.min(8, Math.max(0, +$("s-retries").value || 0));
-  settings.rules = $("s-rules").value.slice(0, 3000);
+  settings.rules = $("s-rules").value.slice(0, RULES_MAX_CHARS);
   settings.titleMax = Math.max(60, +$("s-title-max").value || 200);
   settings.descMax = Math.max(200, +$("s-desc-max").value || 2000);
   settings.pnInTitle = $("s-pn-title").checked;
