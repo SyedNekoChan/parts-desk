@@ -490,7 +490,7 @@ function readableError(status, payload){
   if (status === 404)
     return "That model name wasn't found. Pick another one in Settings.";
   if (status === 413)
-    return "That request was too large for Groq to accept. This app now guards against the usual cause — a pasted line that isn't really a part number — but if you're still seeing this, check your House style text in Settings isn't unusually long, and check the part number list for anything that looks like a paragraph rather than a short code.";
+    return `That request was too large for Groq to accept${msg ? ` (Groq said: "${msg}")` : ""}. This app guards against the usual causes — an oversized House style field, a pasted block of text mistaken for a part number, or an unusually long research result — and now also limits the search step to snippets rather than full pages. If you're still seeing this, it's worth reporting which part number triggered it.`;
   return `API error ${status}. ${msg}`;
 }
 
@@ -721,7 +721,13 @@ async function research(part, opts, onNote, signal){
   const { payload, model: usedSearchModel } = await callGroqAuto(settings.model, SEARCH_MODELS, {
     messages:[{ role:"user", content: researchPrompt(part, opts) }],
     temperature:0.2,
-    max_tokens:3000
+    max_tokens:3000,
+    // web_search returns short snippets; visit_website pulls a full page and
+    // the compound systems can chain up to 10 tool calls per request, which
+    // can balloon what Groq holds internally for a well-documented part
+    // even though what we send stays tiny. Keeping this to search only is
+    // both cheaper and a direct guard against that.
+    compound_custom:{ tools:{ enabled_tools:["web_search"] } }
   }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingSearchModel });
 
   lastWorkingSearchModel = usedSearchModel;
