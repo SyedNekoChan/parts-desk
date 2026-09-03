@@ -143,7 +143,6 @@
   ul.sources .n{color:var(--muted);font:500 12px/1.7 var(--mono);flex:none}
   .queries{margin:0 0 10px;display:flex;flex-wrap:wrap;gap:6px}
   .queries .chip{background:#EDF5F3;border-color:#B9D2CC;color:var(--go-hi)}
-  .entrypoint{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-soft)}
 
   .actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
 
@@ -192,8 +191,8 @@
       <span><b id="tally-n">0</b> / <span id="tally-target">40</span> listings</span>
       <div class="track"><div class="fill" id="tally-fill"></div></div>
     </div>
-    <div class="gauge" title="Free grounded searches used today. Resets midnight US Pacific.">
-      <span><b id="quota-n">0</b> / 500 free searches</span>
+    <div class="gauge" title="Compound (search) calls used today. Groq's free tier allows 250/day org-wide; this app tracks it locally so the count may drift slightly from Groq's own dashboard.">
+      <span><b id="quota-n">0</b> / 250 free searches</span>
       <div class="track"><div class="fill" id="quota-fill"></div></div>
     </div>
   </div>
@@ -249,28 +248,36 @@
     <div class="dlg-body">
 
       <fieldset>
-        <legend>Google AI Studio key</legend>
+        <legend>Groq API key</legend>
         <div class="field" style="margin-top:8px">
-          <input type="password" id="s-key" placeholder="AIza..." autocomplete="off" spellcheck="false">
-          <div class="hint">Get one free at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Stored in this browser only — never put it in the repository.</div>
+          <input type="password" id="s-key" placeholder="gsk_..." autocomplete="off" spellcheck="false">
+          <div class="hint">Get one free at <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> — just an email, no card at any point. Stored in this browser only — never put it in the repository.</div>
         </div>
         <div class="callout">
-          <b>Keep this key on the free tier.</b> Don't attach a billing account to its Google Cloud project. A key with no billing account cannot generate a charge — when you reach the daily limit it simply stops until the quota resets, rather than billing you for the overflow.
+          <b>Stay on the Free tier.</b> Free requires no payment method at all, so there's nothing on file to be charged — when you hit the daily limit, requests simply pause until it resets. Don't add a card under Billing to "unlock" the Developer tier; that's the only way this could ever cost money.
         </div>
         <div class="callout">
-          <b>Everyone needs their own key.</b> Google counts usage per project, not per key, so a shared key means a shared 500-a-day pool. One key each and you each get your own.
+          <b>Everyone needs their own account.</b> Groq counts usage per organization, and a fresh sign-up is its own organization — so one key each (each person's own email) gives each person their own daily allowance, rather than splitting one.
         </div>
         <div class="field" style="margin-top:14px">
-          <label for="s-model">Model</label>
+          <label for="s-model">Search model</label>
           <select id="s-model">
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash — better research (default)</option>
-            <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite — faster, lighter</option>
+            <option value="groq/compound">Compound — thorough, can search from a few angles (default)</option>
+            <option value="groq/compound-mini">Compound Mini — faster, one search per part number</option>
           </select>
-          <div class="hint">Only these two include free Google Search on the free tier. The Gemini 3 models charge for search from the first query, so they aren't offered here. If one goes unavailable — Google retires and reshuffles free-tier models fairly often — the app automatically tries the other before giving up.</div>
+          <div class="hint">These are the two Groq models with a built-in web-search tool. Both draw from the same 250-searches-a-day free allowance, shared across your whole account regardless of which one you pick.</div>
+        </div>
+        <div class="field">
+          <label for="s-format-model">Writing model</label>
+          <select id="s-format-model">
+            <option value="openai/gpt-oss-20b">GPT-OSS 20B — good at following the format rules (default)</option>
+            <option value="llama-3.3-70b-versatile">Llama 3.3 70B — larger, sometimes better prose</option>
+          </select>
+          <div class="hint">Turns the research into the title, bullets and description. Doesn't search, so it draws from Groq's much larger everyday allowance (14,400 calls/day) instead of the 250 above — this step won't be what runs you short.</div>
         </div>
         <div class="field">
           <button type="button" class="btn tiny" id="btn-check-models">Check available models</button>
-          <div class="hint">Asks Google directly which models this key can actually reach right now, rather than assuming. Useful if you're seeing a "model not found" error.</div>
+          <div class="hint">Asks Groq directly which models this key can actually reach right now, rather than assuming. Useful if you're seeing a "model not found" error — Groq's free-tier lineup changes over time like every other provider's.</div>
           <pre id="model-check-result" class="callout" style="display:none;white-space:pre-wrap;font:500 12.5px/1.6 var(--mono);margin-top:8px"></pre>
         </div>
       </fieldset>
@@ -287,7 +294,8 @@
             <input type="number" id="s-retries" min="0" max="8">
           </div>
         </div>
-        <div class="hint" style="margin-top:-6px">The free tier allows only a few requests a minute. A gap of 4–6 seconds keeps a long batch from tripping the limit. When it trips anyway, the app waits as long as Google asks and picks up where it left off.</div>
+        <div class="hint" style="margin-top:-6px">The free tier allows only a few requests a minute. A gap of 4–6 seconds keeps a long batch from tripping the limit. When it trips anyway, the app waits as long as Groq asks and picks up where it left off.</div>
+        <div class="hint" style="margin-top:6px">Note: this counts against a smaller, separate per-minute limit than the plain-text calls, since compound systems (search) are capped at 30 requests/minute independent of the 30/min the writing model gets.</div>
       </fieldset>
 
       <fieldset>
@@ -347,15 +355,14 @@
 /* ============================================================
    Parts Desk — a single-file listing builder for IT hardware.
 
-   Runs entirely in the browser against the Gemini API free tier.
+   Runs entirely in the browser against the Groq API free tier.
    Two calls per part number:
-     1. grounded research  (Google Search, counts against 500/day)
-     2. formatting to JSON (no search, strict response schema)
+     1. research with Groq's built-in web search (counts against ~250/day)
+     2. formatting to JSON on a plain model (no search, own much larger allowance)
    ============================================================ */
 
 const $ = (id) => document.getElementById(id);
-const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
-const GROUNDED_PER_DAY = 500;
+const GROUNDED_PER_DAY = 250; // Groq's published free-tier cap for groq/compound + compound-mini combined
 
 /* ---------- storage (degrades to memory if blocked) ---------- */
 const mem = {};
@@ -366,7 +373,7 @@ const store = {
 };
 
 const DEFAULTS = {
-  apiKey:"", model:"gemini-2.5-flash",
+  apiKey:"", model:"groq/compound", formatModel:"openai/gpt-oss-20b",
   gapSeconds:5, retries:4,
   rules:"", titleMax:200, descMax:2000, pnInTitle:true, target:40
 };
@@ -375,15 +382,13 @@ try { Object.assign(settings, JSON.parse(store.get("pd.settings") || "{}")); } c
 function saveSettings(){ store.set("pd.settings", JSON.stringify(settings)); }
 
 /* ---------- counters ----------
-   Listings are counted on the local day. The grounding quota is
-   counted on the US Pacific day, because that is when Google
-   resets it. Mixing the two would show a wrong number every
-   evening outside the Americas. */
+   Listings are tracked on the local day. The search quota is tracked
+   on the local day too — Groq, unlike Google, doesn't publish a fixed
+   reset clock for the free tier, so this counter is this app's own
+   running total rather than a guarantee against Groq's real one. Treat
+   it as an estimate: if it says you have room left but Groq still
+   returns a 429, Groq's clock and this one have simply drifted apart. */
 function localDay(){ return new Date().toLocaleDateString("en-CA"); }
-function pacificDay(){
-  try { return new Date().toLocaleDateString("en-CA", { timeZone:"America/Los_Angeles" }); }
-  catch { return localDay(); }
-}
 
 let tally = { date: localDay(), n: 0 };
 try {
@@ -391,10 +396,10 @@ try {
   if (t && t.date === localDay()) tally = t;
 } catch {}
 
-let quota = { date: pacificDay(), n: 0 };
+let quota = { date: localDay(), n: 0 };
 try {
   const q = JSON.parse(store.get("pd.quota") || "null");
-  if (q && q.date === pacificDay()) quota = q;
+  if (q && q.date === localDay()) quota = q;
 } catch {}
 
 function drawGauges(){
@@ -413,7 +418,7 @@ function bumpTally(){
   tally.n++; store.set("pd.tally", JSON.stringify(tally)); drawGauges();
 }
 function bumpQuota(){
-  if (quota.date !== pacificDay()) quota = { date: pacificDay(), n: 0 };
+  if (quota.date !== localDay()) quota = { date: localDay(), n: 0 };
   quota.n++; store.set("pd.quota", JSON.stringify(quota)); drawGauges();
 }
 
@@ -454,96 +459,93 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 });
 
 /* ============================================================
-   Gemini API
+   Groq API — OpenAI-compatible Chat Completions, plus Groq's
+   built-in "compound" web search tool.
    ============================================================ */
 
-function apiUrl(model){ return API_BASE + encodeURIComponent(model) + ":generateContent"; }
+const API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const MODELS_LIST_URL = "https://api.groq.com/openai/v1/models";
 
 function readableError(status, payload){
   const msg = payload?.error?.message || "";
-  if (status === 400 && /API key not valid|API_KEY_INVALID/i.test(msg))
-    return "That API key isn't valid. Check it in Settings, or make a new one at aistudio.google.com/apikey.";
-  if (status === 403 && /referer|referrer|blocked/i.test(msg))
-    return "The key is restricted and this site isn't on its allowed list. In Google Cloud Console, either remove the restriction or add this page's address to the allowed referrers.";
+  if (status === 401)
+    return "That API key isn't valid. Check it in Settings, or make a new one at console.groq.com/keys.";
   if (status === 403)
-    return "The key was refused. Make sure the Generative Language API is enabled for its project. " + msg;
+    return "The key was refused for this request. " + msg;
   if (status === 429)
-    return "Free tier limit reached. This costs nothing — it just means waiting. Daily quotas reset at midnight US Pacific.";
+    return "Free tier limit reached. This costs nothing — a Free-tier key has no payment method to charge, so it just waits. Try again shortly, or in a bit longer if it's the daily cap rather than the per-minute one.";
   if (status === 503 || status === 500)
-    return "Google's servers are busy. Trying again in a moment usually clears it.";
+    return "Groq's servers are busy. Trying again in a moment usually clears it.";
   if (status === 404)
     return "That model name wasn't found. Pick another one in Settings.";
   return `API error ${status}. ${msg}`;
 }
 
-/* Google returns a suggested wait on 429s; honour it rather than guessing. */
-function retryDelayMs(payload){
-  const details = payload?.error?.details || [];
-  for (const d of details){
-    if (typeof d.retryDelay === "string"){
-      const m = d.retryDelay.match(/^([\d.]+)s$/);
-      if (m) return Math.ceil(parseFloat(m[1]) * 1000);
-    }
+/* Groq (like other OpenAI-style APIs) sends a Retry-After header on 429s
+   rather than a field in the JSON body — read the header first. */
+function retryDelayMs(res){
+  const h = res?.headers?.get?.("retry-after");
+  if (h){
+    const n = parseFloat(h);
+    if (!Number.isNaN(n)) return Math.ceil(n * 1000);
   }
   return 0;
 }
 
-async function callGemini(model, body, { signal, onNote } = {}){
+async function callGroq(model, body, { signal, onNote } = {}){
   const attempts = Math.max(0, settings.retries) + 1;
   let lastErr = null;
 
   for (let attempt = 0; attempt < attempts; attempt++){
     let res, payload;
     try {
-      res = await fetch(apiUrl(model), {
+      res = await fetch(API_URL, {
         method:"POST",
-        headers:{ "content-type":"application/json", "x-goog-api-key": settings.apiKey },
-        body: JSON.stringify(body),
+        headers:{ "content-type":"application/json", "authorization": "Bearer " + settings.apiKey },
+        body: JSON.stringify({ model, ...body }),
         signal
       });
     } catch (e){
       if (e.name === "AbortError") throw e;
-      throw new Error("Couldn't reach Google. Check your connection and try again.");
+      throw new Error("Couldn't reach Groq. Check your connection and try again.");
     }
 
     try { payload = await res.json(); } catch { payload = null; }
 
     if (res.ok) return payload;
 
-    // 404 here almost always means the model name itself is unavailable —
-    // retiring, region-restricted, or a Google-side rollout gap — not
-    // something a retry against the same name will fix.
+    // 404 here means the model name itself is unavailable — retiring,
+    // renamed, or a lineup change — not something a retry will fix.
     const retryable = res.status === 429 || res.status === 503 || res.status === 500;
     lastErr = new Error(readableError(res.status, payload));
     lastErr._status = res.status;
     if (!retryable || attempt === attempts - 1) throw lastErr;
 
-    const wait = retryDelayMs(payload) || Math.min(60000, 4000 * Math.pow(2, attempt));
+    const wait = retryDelayMs(res) || Math.min(60000, 4000 * Math.pow(2, attempt));
     onNote?.(`Rate limited. Waiting ${Math.round(wait/1000)}s, then carrying on.`);
     await sleep(wait, signal);
   }
   throw lastErr;
 }
 
-/* Model names in the free tier move around more than most APIs — Google
-   retires them, rolls them out per-region, and occasionally has a backing
-   build go bad for one alias while its sibling stays fine. Rather than
-   surface a dead end on the first 404, try the operator's chosen model,
-   then whichever model last worked in this tab, then the other known
-   free-and-grounded model, and only fail once every option is exhausted. */
-const FREE_GROUNDING_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
-let lastWorkingModel = null;
+/* Free-tier model lineups shift over time on every provider, not just
+   Google's. Try the operator's chosen model, then whichever one last
+   worked in this tab, then fall back through the given alternates, and
+   only fail once every option is exhausted. */
+const SEARCH_MODELS = ["groq/compound", "groq/compound-mini"];
+const FORMAT_MODELS = ["openai/gpt-oss-20b", "llama-3.3-70b-versatile"];
+let lastWorkingSearchModel = null;
+let lastWorkingFormatModel = null;
 
-async function callGeminiAuto(body, { signal, onNote } = {}){
-  const candidates = [...new Set([lastWorkingModel, settings.model, ...FREE_GROUNDING_MODELS].filter(Boolean))];
+async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, remembered } = {}){
+  const candidates = [...new Set([remembered, preferred, ...fallbacks].filter(Boolean))];
   const tried = [];
   let lastErr = null;
 
   for (const model of candidates){
     try {
-      const payload = await callGemini(model, body, { signal, onNote });
-      if (model !== settings.model) onNote?.(`Using ${model} for this one — ${tried[0] || settings.model} wasn't available just now.`);
-      lastWorkingModel = model;
+      const payload = await callGroq(model, body, { signal, onNote });
+      if (model !== preferred) onNote?.(`Using ${model} for this one — ${tried[0] || preferred} wasn't available just now.`);
       return { payload, model };
     } catch (e){
       if (e.name === "AbortError") throw e;
@@ -554,61 +556,62 @@ async function callGeminiAuto(body, { signal, onNote } = {}){
   }
 
   throw new Error(
-    `None of the free search-grounded models (${tried.join(", ")}) are answering for this key right now. ` +
-    `Open Settings and use "Check available models" to see what your key can actually reach — the free-tier model lineup changes fairly often. ` +
-    `Google is scheduled to retire the Gemini 2.5 models on October 16, 2026; if today is on or after that date, this app will need updating for whatever replaces them.`
+    `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
+    `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
   );
 }
 
-/* Diagnostic: asks Google directly which models this key can call, rather
-   than guessing. Useful because availability varies by account and region
-   in ways the app has no way to predict. */
-const MODELS_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-
+/* Diagnostic: asks Groq directly which models this key can call. */
 async function listAvailableModels(){
-  const res = await fetch(`${MODELS_LIST_URL}?pageSize=200`, {
-    headers:{ "x-goog-api-key": settings.apiKey }
+  const res = await fetch(MODELS_LIST_URL, {
+    headers:{ "authorization": "Bearer " + settings.apiKey }
   });
   let payload; try { payload = await res.json(); } catch { payload = null; }
   if (!res.ok) throw new Error(readableError(res.status, payload));
 
-  return (payload?.models || [])
-    .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
-    .map(m => (m.name || "").replace(/^models\//, ""))
+  return (payload?.data || [])
+    .map(m => m.id)
     .filter(Boolean)
     .sort();
 }
 
 function textOf(payload){
-  const parts = payload?.candidates?.[0]?.content?.parts || [];
-  return parts.map(p => p.text || "").join("");
+  return payload?.choices?.[0]?.message?.content || "";
 }
 
-/* Sources come from Google's grounding metadata rather than from the
-   model's own writing, so they can't be invented. */
+function finishedCleanly(payload){
+  const fr = payload?.choices?.[0]?.finish_reason;
+  return !fr || fr === "stop";
+}
+
+/* Groq's compound models return the tools they actually ran in
+   executed_tools. Each search tool call carries the query it sent and a
+   text blob of results; URLs are pulled out of that text rather than
+   invented, so a listing can never cite a source the model didn't see. */
 function groundingOf(payload){
-  const g = payload?.candidates?.[0]?.groundingMetadata || {};
-  const seen = new Set();
-  const sources = [];
-  for (const chunk of (g.groundingChunks || [])){
-    const w = chunk.web; if (!w?.uri) continue;
-    const key = w.uri;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    sources.push({ title: w.title || w.domain || "Source", url: w.uri, domain: w.domain || w.title || "" });
-  }
-  return {
-    sources,
-    queries: g.webSearchQueries || [],
-    entryPoint: g.searchEntryPoint?.renderedContent || ""
-  };
-}
+  const tools = payload?.choices?.[0]?.message?.executed_tools || [];
+  const queries = [];
+  const urls = new Set();
+  const urlRe = /https?:\/\/[^\s")\]]+/g;
 
-function blockedReason(payload){
-  if (payload?.promptFeedback?.blockReason) return payload.promptFeedback.blockReason;
-  const fr = payload?.candidates?.[0]?.finishReason;
-  if (fr && !["STOP","MAX_TOKENS"].includes(fr)) return fr;
-  return null;
+  for (const t of tools){
+    if (t.type !== "search") continue;
+    try {
+      const args = JSON.parse(t.arguments || "{}");
+      if (args.query) queries.push(args.query);
+    } catch {}
+    const text = t.output || "";
+    let m;
+    while ((m = urlRe.exec(text))) urls.add(m[0].replace(/[.,;:]+$/, ""));
+  }
+
+  const sources = [...urls].slice(0, 10).map(u => {
+    let host = u;
+    try { host = new URL(u).hostname.replace(/^www\./, ""); } catch {}
+    return { title: host, url: u };
+  });
+
+  return { sources, queries, searchPerformed: tools.some(t => t.type === "search") };
 }
 
 /* ============================================================
@@ -626,7 +629,7 @@ function researchPrompt(part, opts){
   const lines = [];
   lines.push(`You research computer hardware part numbers for a business that resells IT equipment: systems and components from Dell, HP, Lenovo, Jabra, Poly, NVIDIA, AMD, Seagate and similar makers, plus panels, bezels, cables, adapters, docks and spare parts.`);
   lines.push("");
-  lines.push(`Search the web and work out exactly what this part is.`);
+  lines.push(`Use your web search tool to find this part number and work out exactly what it is. Do not answer from memory alone — a part number is not something to guess at, and you have a search tool for exactly this reason.`);
   lines.push("");
   lines.push(`Part number: ${part}`);
   if (opts.brand) lines.push(`Brand suggested by the operator (verify it, don't assume it): ${opts.brand}`);
@@ -649,18 +652,35 @@ function researchPrompt(part, opts){
 function formatPrompt(part, opts, brief){
   const t = settings.titleMax, d = settings.descMax;
   const lines = [];
-  lines.push(`Below is a research brief on a computer hardware part number. Turn it into listing copy for a marketplace.`);
+  lines.push(`Below is a research brief on a computer hardware part number. Turn it into listing copy for a marketplace, and return it as a single JSON object.`);
   lines.push("");
   lines.push(`Use only what the brief contains. Do not add specifications, compatibility or model names that aren't in it. If the brief says something is unconfirmed, either leave it out or record it in "warnings" — never present it as fact.`);
   lines.push("");
   lines.push(`Write for a buyer who searches by part number and then skims for whether it fits. Plain, concrete, specific. No marketing adjectives, no exclamation marks, no invented benefits, no first person. Never write a placeholder like "N/A" or "Unknown" into the title, bullets or description — leave the detail out instead.`);
+  lines.push("");
+  lines.push(`Return exactly this JSON shape and nothing else — no prose before or after, no markdown fences:`);
+  lines.push(`{
+  "part_number": string,
+  "brand": string,
+  "model": string,
+  "product_type": string,
+  "identified": boolean,
+  "confidence": "high" | "medium" | "low",
+  "title": string,
+  "bullets": [string, string, string, string, string],
+  "description": string,
+  "specs": [{"label": string, "value": string}],
+  "compatibility": [string],
+  "alternate_part_numbers": [string],
+  "warnings": [string]
+}`);
   lines.push("");
   lines.push(`Field rules:`);
   lines.push(`- title: at most ${t} characters, counted as characters. Brand first, then model or series, then the product type, then the two to four specifications a buyer filters on.${settings.pnInTitle ? " Include the part number, since buyers search for it." : " Do not include the part number."} No pipes, no ALL CAPS words, no repeated words, no filler such as "High Quality" or "Fast Shipping".`);
   lines.push(`- bullets: exactly five, each a complete statement under 200 characters, each opening with the concrete detail rather than a label. Cover different ground in each: what it is and where it goes; the headline specification; a second specification or physical detail; compatibility or what it replaces, only where the brief supports it; and condition or what is in the box. Do not restate the title.`);
   lines.push(`- description: at most ${d} characters, counted as characters. Two to four short paragraphs of plain prose, no headings and no bullet characters. Open with the brand, model and part number so the first line works as a search snippet. Then what it does and where it fits, then the specifications, then condition and anything worth checking before ordering. Let the main search terms recur naturally two or three times across the whole text, no more.`);
   lines.push(`- specs: up to twelve rows taken from the brief.`);
-  lines.push(`- warnings: what the operator must check before publishing — ambiguity about which product this is, disagreement between sources, thin sourcing. Empty if the brief was solid.`);
+  lines.push(`- warnings: what the operator must check before publishing — ambiguity about which product this is, disagreement between sources, thin sourcing. Empty array if the brief was solid.`);
   lines.push(`- confidence: how well the brief pins this part down.`);
   lines.push("");
   lines.push(`Part number: ${part}`);
@@ -678,85 +698,57 @@ function formatPrompt(part, opts, brief){
   return lines.join("\n");
 }
 
-const LISTING_SCHEMA = {
-  type:"object",
-  properties:{
-    part_number:{ type:"string" },
-    brand:{ type:"string" },
-    model:{ type:"string" },
-    product_type:{ type:"string" },
-    identified:{ type:"boolean" },
-    confidence:{ type:"string", enum:["high","medium","low"] },
-    title:{ type:"string" },
-    bullets:{ type:"array", items:{ type:"string" } },
-    description:{ type:"string" },
-    specs:{ type:"array", items:{
-      type:"object",
-      properties:{ label:{ type:"string" }, value:{ type:"string" } },
-      required:["label","value"],
-      propertyOrdering:["label","value"]
-    }},
-    compatibility:{ type:"array", items:{ type:"string" } },
-    alternate_part_numbers:{ type:"array", items:{ type:"string" } },
-    warnings:{ type:"array", items:{ type:"string" } }
-  },
-  required:["part_number","brand","model","product_type","identified","confidence",
-            "title","bullets","description","specs","compatibility",
-            "alternate_part_numbers","warnings"],
-  propertyOrdering:["part_number","brand","model","product_type","identified","confidence",
-                    "title","bullets","description","specs","compatibility",
-                    "alternate_part_numbers","warnings"]
-};
-
 /* ============================================================
    The two-step run
    ============================================================ */
 
 async function research(part, opts, onNote, signal){
-  onNote({ text:"Searching Google for " + part });
+  onNote({ text:"Searching for " + part });
 
-  const { payload } = await callGeminiAuto({
-    contents:[{ role:"user", parts:[{ text: researchPrompt(part, opts) }] }],
-    tools:[{ google_search:{} }],
-    generationConfig:{ temperature:0.2, maxOutputTokens:8192 }
-  }, { signal, onNote: (t) => onNote({ text:t }) });
+  const { payload, model: usedSearchModel } = await callGroqAuto(settings.model, SEARCH_MODELS, {
+    messages:[{ role:"user", content: researchPrompt(part, opts) }],
+    temperature:0.2,
+    max_tokens:3000
+  }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingSearchModel });
 
+  lastWorkingSearchModel = usedSearchModel;
   bumpQuota();
 
-  const blocked = blockedReason(payload);
   const brief = textOf(payload).trim();
   const grounding = groundingOf(payload);
 
   if (!brief){
-    throw new Error(blocked
-      ? `The research step came back empty (${blocked}). Try running this part number again.`
-      : "The research step came back empty. Try running this part number again.");
+    throw new Error(finishedCleanly(payload)
+      ? "The research step came back empty. Try running this part number again."
+      : `The research step stopped early (${payload?.choices?.[0]?.finish_reason}). Try running this part number again.`);
   }
 
   if (grounding.queries.length) onNote({ queries: grounding.queries });
-  onNote({ text:`Read ${grounding.sources.length} source${grounding.sources.length === 1 ? "" : "s"}. Writing the listing.` });
+  if (!grounding.searchPerformed) onNote({ text:"The model didn't use its search tool for this one — treat the result as unverified." });
+  else onNote({ text:`Read ${grounding.sources.length} source${grounding.sources.length === 1 ? "" : "s"}. Writing the listing.` });
 
-  const { payload: formatted } = await callGeminiAuto({
-    contents:[{ role:"user", parts:[{ text: formatPrompt(part, opts, brief) }] }],
-    generationConfig:{
-      temperature:0.3,
-      maxOutputTokens:4096,
-      responseMimeType:"application/json",
-      responseSchema: LISTING_SCHEMA,
-      thinkingConfig:{ thinkingBudget:0 }
-    }
-  }, { signal, onNote: (t) => onNote({ text:t }) });
+  const { payload: formatted, model: usedFormatModel } = await callGroqAuto(settings.formatModel, FORMAT_MODELS, {
+    messages:[{ role:"user", content: formatPrompt(part, opts, brief) }],
+    temperature:0.3,
+    max_tokens:2500,
+    response_format:{ type:"json_object" }
+  }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingFormatModel });
+
+  lastWorkingFormatModel = usedFormatModel;
 
   const raw = textOf(formatted).trim();
   const data = extractJson(raw);
   if (!data) throw new Error("The listing came back unreadable. Try running this part number again.");
 
+  if (!grounding.searchPerformed){
+    data.warnings = [...(data.warnings || []), "No web search was performed for this part number — everything above is unverified."];
+  }
   data._grounding = grounding;
   data._brief = brief;
   return data;
 }
 
-/* The schema makes clean JSON the norm, but a truncated or fenced
+/* json_object mode makes clean JSON the norm, but a truncated or fenced
    reply still turns up occasionally, so parse defensively. */
 function extractJson(text){
   if (!text) return null;
@@ -796,8 +788,8 @@ function extractJson(text){
 
 /* A short follow-up with no search, used to trim an overlong field. */
 async function shorten(field, value, limit){
-  const { payload } = await callGeminiAuto({
-    contents:[{ role:"user", parts:[{ text:
+  const { payload, model } = await callGroqAuto(settings.formatModel, FORMAT_MODELS, {
+    messages:[{ role:"user", content:
 `Rewrite this product listing ${field} so it is at most ${limit} characters. It is currently ${value.length}.
 
 Keep every factual claim. Cut filler, repetition and the least useful detail first. Do not add anything new. Keep the same tone and the same opening terms.
@@ -805,15 +797,18 @@ Keep every factual claim. Cut filler, repetition and the least useful detail fir
 Return only the rewritten ${field}, with no preamble and no quotation marks around it.
 
 ---
-${value}` }]}],
-    generationConfig:{ temperature:0.3, maxOutputTokens:2048, thinkingConfig:{ thinkingBudget:0 } }
-  }, {});
+${value}` }],
+    temperature:0.3,
+    max_tokens:2000
+  }, { remembered: lastWorkingFormatModel });
+  lastWorkingFormatModel = model;
   return textOf(payload).trim();
 }
 
 /* ============================================================
    Queue
    ============================================================ */
+
 
 function parsePartNumbers(raw){
   // Strips list markers ("- ", "3) ") without touching part numbers
@@ -830,7 +825,7 @@ async function runQueue(){
 
   if (!settings.apiKey){
     openSettings();
-    toast("Add your free Google AI Studio key to get started.");
+    toast("Add your free Groq key to get started.");
     return;
   }
 
@@ -839,7 +834,7 @@ async function runQueue(){
 
   if (quota.n + parts.length > GROUNDED_PER_DAY){
     const left = Math.max(0, GROUNDED_PER_DAY - quota.n);
-    if (!confirm(`You have ${left} free searches left today and queued ${parts.length}. The ones past the limit will fail until the quota resets at midnight US Pacific. Nothing will be charged either way. Run anyway?`)) return;
+    if (!confirm(`You've used roughly ${quota.n} of today's ~250 free searches and queued ${parts.length} more. The ones past the limit will fail until Groq's daily allowance resets — this app can't say exactly when, since Groq doesn't publish a fixed clock the way Google does. Nothing will be charged either way. Run anyway?`)) return;
   }
 
   const opts = { brand: $("brand").value, condition: $("condition").value };
@@ -900,7 +895,7 @@ function normalise(d, part){
   const arr = (v) => Array.isArray(v) ? v : [];
   const bullets = arr(d.bullets).map(s).filter(Boolean);
   while (bullets.length < 5) bullets.push("");
-  const g = d._grounding || { sources:[], queries:[], entryPoint:"" };
+  const g = d._grounding || { sources:[], queries:[], searchPerformed:false };
   return {
     part_number: s(d.part_number) || part,
     brand: s(d.brand),
@@ -918,7 +913,7 @@ function normalise(d, part){
     warnings: arr(d.warnings).map(s).filter(Boolean),
     sources: g.sources,
     queries: g.queries,
-    entryPoint: g.entryPoint
+    searchPerformed: g.searchPerformed
   };
 }
 
@@ -980,9 +975,9 @@ function wireRetry(item){
 function emptyView(){
   return `<div class="empty">
     <h1>Give it a part number.</h1>
-    <p>It searches Google, works out what the part actually is, and writes the title, five bullets and the description — with the sources it used, so you can spot-check anything that matters.</p>
+    <p>It searches the web, works out what the part actually is, and writes the title, five bullets and the description — with the sources it used, so you can spot-check anything that matters.</p>
     <ol>
-      <li>Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> and paste it into <b>Settings</b>.</li>
+      <li>Get a free key at <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> and paste it into <b>Settings</b>.</li>
       <li>Paste your part numbers, one per line — <code>YF8P5</code>, <code>0X8DXD</code>.</li>
       <li>Press <b>Build listings</b> and let the batch run.</li>
     </ol>
@@ -1062,8 +1057,9 @@ function resultView(item){
         ${d.sources.length ? `<ul class="sources">${d.sources.map((s,i) => `
           <li><span class="n">${i+1}</span>
             <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a></li>`).join("")}</ul>`
-          : `<p class="hint" style="margin:0">No sources came back. Treat everything above as unverified.</p>`}
-        ${d.entryPoint ? `<div class="entrypoint">${d.entryPoint}</div>` : ""}
+          : d.searchPerformed
+            ? `<p class="hint" style="margin:0">The search ran, but no clean URLs could be pulled from its output. Treat the specs above as less certain than usual.</p>`
+            : `<p class="hint" style="margin:0">No search was performed for this one. Treat everything above as unverified.</p>`}
       </div>
     </div>`;
 
@@ -1232,6 +1228,7 @@ function exportCsv(){
 function openSettings(){
   $("s-key").value = settings.apiKey;
   $("s-model").value = settings.model;
+  $("s-format-model").value = settings.formatModel;
   $("s-gap").value = settings.gapSeconds;
   $("s-retries").value = settings.retries;
   $("s-rules").value = settings.rules;
@@ -1248,6 +1245,7 @@ $("settings").addEventListener("close", () => {
   if ($("settings").returnValue !== "save") return;
   settings.apiKey = $("s-key").value.trim();
   settings.model = $("s-model").value;
+  settings.formatModel = $("s-format-model").value;
   settings.gapSeconds = Math.min(60, Math.max(0, +$("s-gap").value || 0));
   settings.retries = Math.min(8, Math.max(0, +$("s-retries").value || 0));
   settings.rules = $("s-rules").value;
@@ -1271,22 +1269,28 @@ $("btn-check-models").onclick = async () => {
 
   btn.disabled = true; btn.textContent = "Checking…";
   out.style.display = "block";
-  out.textContent = "Asking Google…";
+  out.textContent = "Asking Groq…";
   try {
     const models = await listAvailableModels();
     if (!models.length){
-      out.textContent = "The key works, but no models on it support generateContent. Something is off with the project itself.";
+      out.textContent = "The key works, but no models came back. Something is off with the account itself.";
     } else {
-      const known = models.filter(m => FREE_GROUNDING_MODELS.includes(m));
-      const other = models.filter(m => !FREE_GROUNDING_MODELS.includes(m));
+      const search = models.filter(m => SEARCH_MODELS.includes(m));
+      const format = models.filter(m => FORMAT_MODELS.includes(m));
+      const other = models.filter(m => !SEARCH_MODELS.includes(m) && !FORMAT_MODELS.includes(m));
       const lines = [];
-      if (known.length) lines.push("Free + search grounding, confirmed available to this key:");
-      known.forEach(m => lines.push("  ✓ " + m));
-      if (!known.length) lines.push("Neither known free-grounding model is showing up for this key right now.");
+      lines.push("Search models (used for research, draw from the 250/day allowance):");
+      if (search.length) search.forEach(m => lines.push("  ✓ " + m));
+      else lines.push("  Neither groq/compound nor groq/compound-mini is showing up for this key right now.");
+      lines.push("");
+      lines.push("Writing models (used to format the listing, much higher daily allowance):");
+      if (format.length) format.forEach(m => lines.push("  ✓ " + m));
+      else lines.push("  Neither of the two writing models is showing up for this key right now.");
       if (other.length){
         lines.push("");
-        lines.push("Also reachable (grounding cost or free status not guaranteed — check the model's page before relying on it):");
-        other.forEach(m => lines.push("  · " + m));
+        lines.push(`Also on this account (${other.length} more) — not wired into this app, shown for reference:`);
+        other.slice(0, 15).forEach(m => lines.push("  · " + m));
+        if (other.length > 15) lines.push(`  … and ${other.length - 15} more`);
       }
       out.textContent = lines.join("\n");
     }
@@ -1297,6 +1301,7 @@ $("btn-check-models").onclick = async () => {
     btn.disabled = false; btn.textContent = "Check available models";
   }
 };
+
 
 $("btn-reset-tally").onclick = () => {
   tally = { date: localDay(), n: 0 };

@@ -1,79 +1,110 @@
 # Parts Desk
 
-A one-page listing builder for IT hardware. You give it a manufacturer part number; it searches Google, works out what the part is, and writes an SEO title, five bullets and a description — with the sources it used, so you can spot-check anything that matters.
+**Turn a bare manufacturer part number into a ready-to-publish marketplace listing.**
 
-Runs on the Google Gemini free tier. **No billing account, no card, no charges.**
+Parts Desk is a single-file, static web app for anyone reselling IT hardware — laptops, motherboards, docks, panels, bezels, cables, spares — who has to build listings from nothing but a part number. Give it `YF8P5`, `0X8DXD`, `5CX56AA`, and it searches the web, works out what the part actually is, and returns an SEO title, five bullet points, and a product description, alongside the sources it used so you can verify anything before it goes live.
+
+No backend, no database, no build step. It's one HTML file that runs entirely in the browser and calls the [Groq API](https://groq.com) directly, using a free key you or your teammates provide.
 
 ---
 
-## Each person gets their own free key
+## Features
 
-1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and sign in with a Google account.
-2. Click **Create API key**. Accept the terms. Copy the key.
-3. Open the [Parts Desk link](https://syednekochan.github.io/parts-desk/), click **Settings**, paste the key, **Save**.
+- **Part number → listing, end to end.** Paste a part number, get a title (≤200 characters), five bullets, and a description (≤2,000 characters), all editable in place before you copy them.
+- **Sourced, not invented.** Every listing shows the search queries it ran and the pages it drew from, plus a confidence badge and an explicit "check before publishing" flag whenever the result is ambiguous, thinly sourced, or unverified.
+- **Batch queue.** Paste dozens of part numbers, one per line, and let them run in order while you do something else.
+- **CSV export.** Pull a finished batch out as a spreadsheet — title, five bullets, and description in separate columns — ready for a bulk upload template.
+- **Configurable house style.** Set your own title/description length limits, whether the part number belongs in the title, and free-text rules (wording to avoid, a warranty line, how to phrase compatibility) that get applied to every listing.
+- **Runs on a genuinely free API tier.** No credit card, no billing account, no usage charges — see [Cost](#cost) below.
+- **Zero infrastructure.** Deploys to GitHub Pages (or any static host, or just a file on your desktop) in minutes.
 
-## What "free" actually covers
+## Quick start
 
-**500 searched listings per day, per person.** Google's free tier includes 500 search-grounded requests a day on Gemini 2.5 Flash and 2.5 Flash-Lite. The app spends exactly one per part number, no matter how many individual searches the model runs inside it, so 500 a day is 500 listings a day. The counter in the header tracks it. It resets at midnight US Pacific, not local midnight, which is why the app tracks it on that clock.
+1. **Deploy it.** Fork or download this repo, drop `index.html` in a public GitHub repository, and turn on **Settings → Pages** (deploy from branch `main`, folder `/root`). Or just open `index.html` locally — it works the same either way.
+2. **Get a free API key** at [console.groq.com/keys](https://console.groq.com/keys) — an email address is all that's required, no card.
+3. **Paste the key** into the app's Settings panel.
+4. **Paste part numbers**, one per line, and press **Build listings**.
 
-**A few requests per minute.** This is the one you'll actually notice. The free tier allows only a handful of requests a minute, and a long batch will trip it. The app handles this: **Seconds between listings** in Settings paces the batch (5 is a good default), and when Google says slow down, the app waits exactly as long as Google asks and then picks up where it left off. A rate limit costs nothing — it just costs time.
+## How it works
 
-The app only offers Gemini 2.5 Flash and 2.5 Flash-Lite, because those are the two models with free search on the free tier. The Gemini 3 models charge for search from the very first query, so they're deliberately not in the list.
+Each part number costs two API calls to [Groq](https://groq.com), both on its free tier:
 
-## Using it
+1. **Research** — `groq/compound`, a model with a built-in web search tool, searches the web from a few angles (bare part number, part number + brand, spec-sheet phrasing, etc.) and produces a plain-text research brief.
+2. **Formatting** — a plain instruction-following model (`openai/gpt-oss-20b` by default) turns that brief into structured JSON: title, bullets, description, specs, compatibility, and any warnings — without touching the web itself.
 
-Paste part numbers into the box, one per line, and press **Build listings** (or Ctrl+Enter). They run in order, so you can queue a batch and go do something else.
+The split matters for two reasons: the search step is the one with a daily allowance to manage, so keeping the formatting step separate means rewriting or shortening a field never costs search quota; and asking a plain model for structured JSON is far more reliable than asking a search-and-reason model to do both at once.
 
-Every field is editable before you copy it. **Export CSV** pulls the whole batch out with the title, five bullets and description in separate columns, ready for a bulk upload sheet.
+Sources shown in the app are extracted from the actual search tool output the model retrieved — never invented, never guessed.
 
-The header shows two counters: listings you've finished today against your target, and free searches used against the daily 500.
+## Cost
 
-### Settings worth changing
+**$0. No credit card is ever requested, on any path through this app.**
 
-- **Seconds between listings** — 5 by default. Raise it if you see a lot of rate-limit waits, lower it if you never do.
-- **House style** — anything your listings always need: wording to avoid, a warranty line, how you phrase compatibility. Applied to every listing, and it overrides the built-in guidance where they conflict.
-- **Title and description limits** — 200 and 2000. Change them if a marketplace wants something different.
+Groq's Free tier requires no payment method at all, which means there's nothing on file that could ever be charged — hitting a rate limit just means waiting, not billing. This is a hard requirement of the project, not an incidental default: don't add a card under Groq's Billing settings, since that's the only action that would introduce cost.
 
-## How it works, and why it's two steps
+Each person who uses the tool should create their own free Groq account (a fresh email is a fresh organization, and Groq's daily allowance is per-organization). Roughly:
 
-Each part number takes two API calls.
+| Allowance | Amount | Applies to |
+|---|---|---|
+| Search-backed research calls | ~250/day, per account | The `groq/compound` step — one per listing |
+| Plain formatting calls | 14,400/day, per account | The JSON-writing step — effectively unlimited for this use case |
+| Requests per minute | 30/min, per account | Both steps; the app paces batches automatically |
 
-The first is the research call. It has Google Search switched on and produces a plain research brief. The second turns that brief into listing copy, and it runs with search switched **off** and a strict output schema. That split does two useful things: it keeps your 500-a-day allowance spent only on research, and it means the copy comes back as valid structured data rather than as prose the app has to guess its way through.
+See [Troubleshooting](#troubleshooting) and the in-app Settings panel for how the app handles rate limits and model availability changes without any action from you.
 
-The sources shown under each listing come from Google's own grounding data, not from the model writing down where it thinks it looked. They can't be invented.
+## Configuration
 
-## About accuracy
+All settings live in the app itself (gear icon → Settings) and are stored in the browser, not in this repository:
 
-The prompt tells the model to state a specification only if it appeared in a search result it actually retrieved, to leave details out rather than guess, and to claim compatibility only where a source lists it. That helps. It does not make it infallible.
+| Setting | What it does |
+|---|---|
+| API key | Your personal Groq key. Never committed to source control — stored client-side only. |
+| Search model | `groq/compound` (default, searches from several angles) or `groq/compound-mini` (faster, one search per listing). |
+| Writing model | `openai/gpt-oss-20b` (default) or `llama-3.3-70b-versatile`. |
+| Seconds between listings | Paces batch runs against Groq's per-minute limit. |
+| Title / description limits | Defaults to 200 / 2,000 characters; adjust to match your marketplace. |
+| Include part number in title | On by default, since buyers in this market search by part number. |
+| House style | Free-text rules applied to every listing (tone, required disclaimers, phrasing conventions). |
 
-So the app shows its work. Every listing carries a confidence badge, the search queries used, the sources, and an amber **Check before publishing** box when the part number was ambiguous, when sources disagreed, or when only one source came back. Treat those flags as your review queue, they're where your own judgement is worth more than another search.
+## Accuracy and review
 
-Two things to watch specifically:
+The model is instructed to state a specification only if it appeared in a page it actually retrieved, never to infer specs from similar-looking part numbers, and to leave a detail out rather than guess at it. That materially reduces — but does not eliminate — the risk of a wrong listing.
 
-- Part numbers reused across product families, or differing from a similar number by one character. The model flags this when it notices, but it can't always tell.
-- Compatibility lists. These are the most-copied and least-checked data on parts sites, so one error propagates across every source that copied it. If fitment is what the buyer is really paying for, verify it yourself.
+Every result carries:
 
-Gemini 2.5 Flash is a small, fast model. On common parts it does this job well. On obscure ones it will more often come back unsure, which is the correct behaviour, and the confidence badge is there to tell you so.
+- A **confidence badge** (Confident / Reasonably sure / Needs checking).
+- The **search queries** the model ran, for transparency.
+- A **sources list**, extracted from what the model actually searched.
+- An amber **"check before publishing"** panel whenever the part number was ambiguous, sources disagreed, fewer than two sources came back, or no search happened at all.
+
+Treat the flagged listings as your review queue. Compatibility claims and part numbers that differ from a known one by a single character are worth a second look regardless of confidence score.
+
+## Limitations
+
+- Groq's compound models return search results as unstructured text rather than a clean list of URLs; this app extracts links with a regular expression. It's reliable but not perfect — occasionally a result won't yield a clean URL, so a listing may show fewer sources than searches performed.
+- Groq doesn't publish an exact daily-reset time for its free tier the way some providers do. The in-app usage counter is this app's own estimate, not a live mirror of Groq's internal limit.
+- Free-tier model availability can shift over time on any provider. The app automatically falls back to an alternate model if its first choice becomes unavailable, and a **Check available models** button in Settings shows live status for your key.
 
 ## Troubleshooting
 
-**"That model name wasn't found" / a red "Didn't finish" box naming a model.** This isn't something wrong with the tool. Google reshuffles which models are available on the free tier fairly often, and occasionally one alias goes dead for a few hours while its sibling stays fine. The tool handles this itself: if your chosen model 404s, it automatically retries with the other free-and-grounded model before giving up, and it remembers whichever one worked so the rest of your batch doesn't pay the same price twice. You'll see a small note in the run log when this happens. If you still get an error after that, open **Settings → Check available models** — it asks Google directly which models your key can reach right now and shows you the real list, rather than the app guessing. Google is scheduled to retire the Gemini 2.5 models on **October 16, 2026**; if you're reading this after that date, the model options in Settings will need updating to whatever replaced them.
+| Symptom | Likely cause / fix |
+|---|---|
+| "That API key isn't valid" | Key was mistyped or revoked, or isn't a Groq key (should start with `gsk_`). Generate a new one. |
+| "That model name wasn't found" | The app already retries with an alternate model automatically. If it still fails, use **Check available models** in Settings. |
+| Frequent rate-limit waits | Expected during a fast batch — Groq allows 30 requests/minute on the search models. Increase the pacing delay in Settings. |
+| Usage counter looks wrong | It's a local estimate, not Groq's authoritative counter (see [Limitations](#limitations)). |
 
-**"That API key isn't valid."** Copied wrong, or the key was deleted. Make a new one.
+## Development
 
-**"The key is restricted and this site isn't on its allowed list."** The key has an HTTP-referrer restriction in Google Cloud Console that doesn't include your GitHub Pages address. Add `https://<your-username>.github.io/*` to the allowed referrers, or remove the restriction.
+The entire app is `index.html` — no dependencies, no build step. `test.mjs` is a jsdom-based test suite that mocks the Groq API and exercises the parts of the app most likely to break silently: part-number parsing, the two-call research/format split, rate-limit retry, model fallback, source extraction, JSON recovery, and CSV export.
 
-**Lots of rate-limit waiting.** Normal on the free tier during a long batch. Raise **Seconds between listings**.
-
-**"Free tier limit reached" and it won't clear.** You've used the day's 500. It resets at midnight US Pacific. Nothing has been charged.
-
-## Tests
-
-`test.mjs` loads the real page in jsdom against a mocked API and checks the parts most likely to break quietly — part number parsing, the two-call split, 429 retry and backoff, quota counting, JSON recovery, CSV escaping.
-
-```
+```bash
 npm install jsdom
 node test.mjs
 ```
 
-Worth running if you edit the prompt or the API code.
+Run it after any change to the prompts or the API integration code.
+
+## License
+
+No license is included, which under default copyright means all rights are reserved. If you'd like to reuse or fork this project, reach out to the repository owner.
