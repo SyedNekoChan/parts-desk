@@ -203,5 +203,97 @@ ok("comma quoted", cell("a,b") === '"a,b"');
 ok("inner quotes doubled", cell('say "hi"') === '"say ""hi"""');
 ok("newlines flattened", cell("a\nb") === "a b");
 
+console.log("\n— model fallback on 404 —");
+function notFound404(){
+  return jsonRes({ error:{ code:404, message:"models/gemini-2.5-flash is not found for API version v1beta, or is not supported for generateContent." } }, 404);
+}
+calls.length = 0;
+plan = [
+  notFound404(),                 // research call on preferred model fails
+  jsonRes(groundingReplyFor("YF8P5-fb")), // research succeeds on fallback model
+  jsonRes(formatReplyFor("YF8P5-fb"))     // format step
+];
+win.eval("lastWorkingModel = null; settings.model = 'gemini-2.5-flash';");
+$("parts").value = "YF8P5-fb";
+$("run").click();
+await idle();
+
+function groundingReplyFor(){ return groundedReply(); }
+function formatReplyFor(part){ return formatReply({ ...LISTING, part_number: part }); }
+
+const fbItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
+ok("run recovers instead of failing outright", fbItem.status === "done" || fbItem.status === "review", fbItem.status);
+ok("three calls: dead model, fallback research, fallback format", calls.length === 3, String(calls.length));
+ok("first call tried the preferred (dead) model",
+   calls[0].url.includes("gemini-2.5-flash:generateContent") && !calls[0].url.includes("lite"));
+ok("second call moved to the other free-grounding model",
+   calls[1].url.includes("gemini-2.5-flash-lite:generateContent"), calls[1].url);
+ok("app remembers the working model for next time",
+   win.eval("lastWorkingModel") === "gemini-2.5-flash-lite");
+
+console.log("\n— fallback is remembered across the next listing —");
+const before2 = calls.length;
+plan = [ jsonRes(groundedReply()), jsonRes(formatReply()) ];
+$("parts").value = "YF8P5-fb2";
+$("run").click();
+await idle();
+ok("next listing goes straight to the known-good model, no wasted 404",
+   calls.length - before2 === 2, String(calls.length - before2));
+ok("that call used the fallback model directly",
+   calls[before2].url.includes("gemini-2.5-flash-lite:generateContent"));
+
+console.log("\n— both models dead —");
+win.eval("lastWorkingModel = null;");
+plan = [ notFound404(), notFound404() ];
+calls.length = 0;
+$("parts").value = "YF8P5-dead";
+$("run").click();
+await idle();
+const deadItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
+ok("surfaces as an error, not a silent hang", deadItem.status === "error");
+ok("error explains both models were tried and points at diagnostics",
+   /gemini-2\.5-flash.*gemini-2\.5-flash-lite|Check available models/.test(deadItem.error), deadItem.error);
+ok("mentions the October 16 2026 retirement date for context",
+   /October 16, 2026/.test(deadItem.error));
+
+console.log("\n— non-404 errors still fail fast, no pointless fallback churn —");
+win.eval("lastWorkingModel = null;");
+plan = [ jsonRes({ error:{ message:"API key not valid. Please pass a valid API key." } }, 400) ];
+calls.length = 0;
+$("parts").value = "YF8P5-badkey";
+$("run").click();
+await idle();
+ok("only one call made — a bad key isn't a model problem", calls.length === 1, String(calls.length));
+const badKeyItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
+ok("surfaces the real cause", /isn't valid/.test(badKeyItem.error));
+
+console.log("\n— diagnostics: list available models —");
+win.fetch = async (url, init) => {
+  calls.push({ url, init });
+  if (url.includes("/v1beta/models?")){
+    return jsonRes({ models:[
+      { name:"models/gemini-2.5-flash", supportedGenerationMethods:["generateContent"] },
+      { name:"models/gemini-2.5-flash-lite", supportedGenerationMethods:["generateContent"] },
+      { name:"models/gemini-3.5-flash", supportedGenerationMethods:["generateContent"] },
+      { name:"models/embedding-001", supportedGenerationMethods:["embedContent"] }
+    ]});
+  }
+  return jsonRes(formatReply());
+};
+$("s-key").value = "AIzaTESTKEY";
+$("btn-check-models").click();
+await wait(50);
+
+ok("list call hits the ListModels endpoint with the key header",
+   calls.some(c => c.url.includes("/v1beta/models?") && c.init.headers["x-goog-api-key"] === "AIzaTESTKEY"));
+ok("embedding-only model excluded (no generateContent support)",
+   !$("model-check-result").textContent.includes("embedding-001"));
+ok("known free-grounding models marked as confirmed",
+   /✓ gemini-2\.5-flash\b/.test($("model-check-result").textContent) &&
+   /✓ gemini-2\.5-flash-lite/.test($("model-check-result").textContent));
+ok("other reachable models listed separately with a caveat",
+   /gemini-3\.5-flash/.test($("model-check-result").textContent) &&
+   /not guaranteed/.test($("model-check-result").textContent));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

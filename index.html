@@ -266,7 +266,12 @@
             <option value="gemini-2.5-flash">Gemini 2.5 Flash — better research (default)</option>
             <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite — faster, lighter</option>
           </select>
-          <div class="hint">Only these two include free Google Search on the free tier. The Gemini 3 models charge for search from the first query, so they aren't offered here.</div>
+          <div class="hint">Only these two include free Google Search on the free tier. The Gemini 3 models charge for search from the first query, so they aren't offered here. If one goes unavailable — Google retires and reshuffles free-tier models fairly often — the app automatically tries the other before giving up.</div>
+        </div>
+        <div class="field">
+          <button type="button" class="btn tiny" id="btn-check-models">Check available models</button>
+          <div class="hint">Asks Google directly which models this key can actually reach right now, rather than assuming. Useful if you're seeing a "model not found" error.</div>
+          <pre id="model-check-result" class="callout" style="display:none;white-space:pre-wrap;font:500 12.5px/1.6 var(--mono);margin-top:8px"></pre>
         </div>
       </fieldset>
 
@@ -483,14 +488,14 @@ function retryDelayMs(payload){
   return 0;
 }
 
-async function callGemini(body, { signal, onNote } = {}){
+async function callGemini(model, body, { signal, onNote } = {}){
   const attempts = Math.max(0, settings.retries) + 1;
   let lastErr = null;
 
   for (let attempt = 0; attempt < attempts; attempt++){
     let res, payload;
     try {
-      res = await fetch(apiUrl(settings.model), {
+      res = await fetch(apiUrl(model), {
         method:"POST",
         headers:{ "content-type":"application/json", "x-goog-api-key": settings.apiKey },
         body: JSON.stringify(body),
@@ -505,8 +510,12 @@ async function callGemini(body, { signal, onNote } = {}){
 
     if (res.ok) return payload;
 
+    // 404 here almost always means the model name itself is unavailable —
+    // retiring, region-restricted, or a Google-side rollout gap — not
+    // something a retry against the same name will fix.
     const retryable = res.status === 429 || res.status === 503 || res.status === 500;
     lastErr = new Error(readableError(res.status, payload));
+    lastErr._status = res.status;
     if (!retryable || attempt === attempts - 1) throw lastErr;
 
     const wait = retryDelayMs(payload) || Math.min(60000, 4000 * Math.pow(2, attempt));
@@ -514,6 +523,60 @@ async function callGemini(body, { signal, onNote } = {}){
     await sleep(wait, signal);
   }
   throw lastErr;
+}
+
+/* Model names in the free tier move around more than most APIs — Google
+   retires them, rolls them out per-region, and occasionally has a backing
+   build go bad for one alias while its sibling stays fine. Rather than
+   surface a dead end on the first 404, try the operator's chosen model,
+   then whichever model last worked in this tab, then the other known
+   free-and-grounded model, and only fail once every option is exhausted. */
+const FREE_GROUNDING_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
+let lastWorkingModel = null;
+
+async function callGeminiAuto(body, { signal, onNote } = {}){
+  const candidates = [...new Set([lastWorkingModel, settings.model, ...FREE_GROUNDING_MODELS].filter(Boolean))];
+  const tried = [];
+  let lastErr = null;
+
+  for (const model of candidates){
+    try {
+      const payload = await callGemini(model, body, { signal, onNote });
+      if (model !== settings.model) onNote?.(`Using ${model} for this one — ${tried[0] || settings.model} wasn't available just now.`);
+      lastWorkingModel = model;
+      return { payload, model };
+    } catch (e){
+      if (e.name === "AbortError") throw e;
+      tried.push(model);
+      if (e._status === 404){ lastErr = e; continue; }
+      throw e;
+    }
+  }
+
+  throw new Error(
+    `None of the free search-grounded models (${tried.join(", ")}) are answering for this key right now. ` +
+    `Open Settings and use "Check available models" to see what your key can actually reach — the free-tier model lineup changes fairly often. ` +
+    `Google is scheduled to retire the Gemini 2.5 models on October 16, 2026; if today is on or after that date, this app will need updating for whatever replaces them.`
+  );
+}
+
+/* Diagnostic: asks Google directly which models this key can call, rather
+   than guessing. Useful because availability varies by account and region
+   in ways the app has no way to predict. */
+const MODELS_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+
+async function listAvailableModels(){
+  const res = await fetch(`${MODELS_LIST_URL}?pageSize=200`, {
+    headers:{ "x-goog-api-key": settings.apiKey }
+  });
+  let payload; try { payload = await res.json(); } catch { payload = null; }
+  if (!res.ok) throw new Error(readableError(res.status, payload));
+
+  return (payload?.models || [])
+    .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map(m => (m.name || "").replace(/^models\//, ""))
+    .filter(Boolean)
+    .sort();
 }
 
 function textOf(payload){
@@ -652,7 +715,7 @@ const LISTING_SCHEMA = {
 async function research(part, opts, onNote, signal){
   onNote({ text:"Searching Google for " + part });
 
-  const payload = await callGemini({
+  const { payload } = await callGeminiAuto({
     contents:[{ role:"user", parts:[{ text: researchPrompt(part, opts) }] }],
     tools:[{ google_search:{} }],
     generationConfig:{ temperature:0.2, maxOutputTokens:8192 }
@@ -673,7 +736,7 @@ async function research(part, opts, onNote, signal){
   if (grounding.queries.length) onNote({ queries: grounding.queries });
   onNote({ text:`Read ${grounding.sources.length} source${grounding.sources.length === 1 ? "" : "s"}. Writing the listing.` });
 
-  const formatted = await callGemini({
+  const { payload: formatted } = await callGeminiAuto({
     contents:[{ role:"user", parts:[{ text: formatPrompt(part, opts, brief) }] }],
     generationConfig:{
       temperature:0.3,
@@ -733,7 +796,7 @@ function extractJson(text){
 
 /* A short follow-up with no search, used to trim an overlong field. */
 async function shorten(field, value, limit){
-  const payload = await callGemini({
+  const { payload } = await callGeminiAuto({
     contents:[{ role:"user", parts:[{ text:
 `Rewrite this product listing ${field} so it is at most ${limit} characters. It is currently ${value.length}.
 
@@ -1176,6 +1239,8 @@ function openSettings(){
   $("s-desc-max").value = settings.descMax;
   $("s-pn-title").checked = settings.pnInTitle;
   $("s-target").value = settings.target;
+  $("model-check-result").style.display = "none";
+  $("model-check-result").textContent = "";
   $("settings").showModal();
 }
 
@@ -1196,6 +1261,42 @@ $("settings").addEventListener("close", () => {
 
 $("btn-settings").onclick = openSettings;
 $("s-cancel").onclick = () => $("settings").close("cancel");
+
+$("btn-check-models").onclick = async () => {
+  const btn = $("btn-check-models"), out = $("model-check-result");
+  const key = $("s-key").value.trim();
+  if (!key){ toast("Paste a key first."); return; }
+  const savedKey = settings.apiKey;
+  settings.apiKey = key; // check against whatever's typed, even if not saved yet
+
+  btn.disabled = true; btn.textContent = "Checking…";
+  out.style.display = "block";
+  out.textContent = "Asking Google…";
+  try {
+    const models = await listAvailableModels();
+    if (!models.length){
+      out.textContent = "The key works, but no models on it support generateContent. Something is off with the project itself.";
+    } else {
+      const known = models.filter(m => FREE_GROUNDING_MODELS.includes(m));
+      const other = models.filter(m => !FREE_GROUNDING_MODELS.includes(m));
+      const lines = [];
+      if (known.length) lines.push("Free + search grounding, confirmed available to this key:");
+      known.forEach(m => lines.push("  ✓ " + m));
+      if (!known.length) lines.push("Neither known free-grounding model is showing up for this key right now.");
+      if (other.length){
+        lines.push("");
+        lines.push("Also reachable (grounding cost or free status not guaranteed — check the model's page before relying on it):");
+        other.forEach(m => lines.push("  · " + m));
+      }
+      out.textContent = lines.join("\n");
+    }
+  } catch (e){
+    out.textContent = e.message;
+  } finally {
+    settings.apiKey = savedKey; // don't persist an unsaved key from a Cancel
+    btn.disabled = false; btn.textContent = "Check available models";
+  }
+};
 
 $("btn-reset-tally").onclick = () => {
   tally = { date: localDay(), n: 0 };
