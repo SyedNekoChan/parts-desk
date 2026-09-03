@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parts Desk — listing builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#E7EAED;
+    --surface:#FFFFFF;
+    --surface-2:#F4F6F8;
+    --ink:#151A20;
+    --muted:#5D6874;
+    --line:#CDD4DB;
+    --line-soft:#E2E7EC;
+    --go:#0E5A4C;
+    --go-hi:#0A483D;
+    --flag:#8A5A0B;
+    --flag-bg:#FBF2DE;
+    --stop:#93292A;
+    --stop-bg:#FBEBEB;
+    --sans:"IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font:400 15px/1.55 var(--sans);-webkit-font-smoothing:antialiased;
+  }
+  button,input,select,textarea{font:inherit;color:inherit}
+  a{color:var(--go);text-underline-offset:2px}
+
+  .bar{
+    display:flex;align-items:center;gap:18px;padding:0 20px;height:56px;
+    background:var(--surface);border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:20;
+  }
+  .wordmark{display:flex;align-items:baseline;gap:8px;font-weight:600;letter-spacing:-.01em}
+  .wordmark .sub{font:500 12px/1 var(--mono);color:var(--muted);letter-spacing:0}
+  .bar .spacer{flex:1}
+
+  .gauges{display:flex;gap:20px;align-items:center}
+  .gauge{font:500 12.5px/1.35 var(--mono);color:var(--muted);white-space:nowrap}
+  .gauge b{color:var(--ink);font-weight:600}
+  .gauge .track{width:104px;height:5px;background:var(--line-soft);border-radius:3px;overflow:hidden;margin-top:3px}
+  .gauge .fill{height:100%;background:var(--go);width:0%;transition:width .3s ease}
+  .gauge .fill.warn{background:var(--flag)}
+  .gauge .fill.bad{background:var(--stop)}
+
+  .btn{
+    border:1px solid var(--line);background:var(--surface);
+    padding:7px 13px;border-radius:5px;cursor:pointer;font-weight:500;font-size:14px;
+  }
+  .btn:hover{background:var(--surface-2)}
+  .btn:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--go);outline-offset:1px}
+  .btn.primary{background:var(--go);border-color:var(--go);color:#fff}
+  .btn.primary:hover{background:var(--go-hi)}
+  .btn.tiny{padding:3px 9px;font-size:12.5px;border-radius:4px}
+  .btn.danger{color:var(--stop);border-color:#E3C2C2}
+
+  main{display:grid;grid-template-columns:330px minmax(0,1fr);align-items:start;height:calc(100vh - 56px)}
+  aside{height:100%;overflow-y:auto;background:var(--surface);border-right:1px solid var(--line);padding:18px}
+  #stage{height:100%;overflow-y:auto;padding:22px 26px 80px}
+
+  .field{margin-bottom:14px}
+  .field > label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
+  .hint{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.45}
+
+  textarea,input[type=text],input[type=password],input[type=number],select{
+    width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:5px;background:var(--surface-2);
+  }
+  #parts{min-height:118px;resize:vertical;font:500 14px/1.7 var(--mono);letter-spacing:.02em}
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  #run{width:100%;padding:10px;font-size:15px;margin-top:2px}
+
+  .queue-head{display:flex;justify-content:space-between;align-items:baseline;margin:22px 0 8px;padding-top:16px;border-top:1px solid var(--line-soft)}
+  .queue-head h2{margin:0;font-size:13px;font-weight:600}
+  #queue{list-style:none;margin:0;padding:0}
+  #queue li{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:5px;cursor:pointer;border:1px solid transparent}
+  #queue li:hover{background:var(--surface-2)}
+  #queue li[aria-current=true]{background:var(--surface-2);border-color:var(--line)}
+  #queue .pn{font:500 13.5px/1.3 var(--mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #queue .dot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+  #queue li[data-status=running] .dot{background:var(--flag);animation:pulse 1.1s ease-in-out infinite}
+  #queue li[data-status=done] .dot{background:var(--go)}
+  #queue li[data-status=review] .dot{background:var(--flag)}
+  #queue li[data-status=error] .dot{background:var(--stop)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+  .empty{max-width:560px;margin-top:6vh;color:var(--muted)}
+  .empty h1{font-size:22px;color:var(--ink);margin:0 0 10px;letter-spacing:-.015em}
+  .empty ol{padding-left:20px;line-height:1.8}
+  .empty code{font:500 13px var(--mono);background:var(--surface);padding:1px 5px;border-radius:3px;border:1px solid var(--line-soft)}
+
+  .result{max-width:860px}
+  .result-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:6px}
+  .result-head h1{margin:0;font:600 26px/1.2 var(--mono);letter-spacing:.01em}
+  .meta{color:var(--muted);font-size:13.5px;margin:0 0 18px}
+
+  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font:500 12px/1.6 var(--sans);border:1px solid}
+  .badge.ok{color:var(--go);border-color:#B9D2CC;background:#EDF5F3}
+  .badge.warn{color:var(--flag);border-color:#E6D2A6;background:var(--flag-bg)}
+  .badge.bad{color:var(--stop);border-color:#E3C2C2;background:var(--stop-bg)}
+
+  .note{border:1px solid #E6D2A6;background:var(--flag-bg);color:#6B4708;padding:11px 13px;border-radius:6px;margin-bottom:18px;font-size:13.5px}
+  .note ul{margin:6px 0 0;padding-left:18px}
+  .note.bad{border-color:#E3C2C2;background:var(--stop-bg);color:#7A2323}
+
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:7px;margin-bottom:16px}
+  .panel-head{display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid var(--line-soft)}
+  .panel-head h3{margin:0;font-size:14px;font-weight:600;flex:1}
+  .count{font:500 12.5px var(--mono);color:var(--muted)}
+  .count.over{color:var(--stop);font-weight:600}
+  .panel-body{padding:13px}
+
+  .editable{width:100%;border:0;background:transparent;resize:vertical;padding:0;font:inherit;line-height:1.6}
+  .editable:focus{outline:none}
+  #f-title{font-weight:500;min-height:52px}
+  #f-desc{min-height:230px}
+  .bullet-row{display:flex;gap:9px;align-items:flex-start;padding:5px 0}
+  .bullet-row + .bullet-row{border-top:1px solid var(--line-soft)}
+  .bullet-row .mark{color:var(--muted);font:500 13px/1.7 var(--mono);flex:none;width:18px}
+  .bullet-row textarea{min-height:24px}
+  .bullet-row .len{font:500 11.5px/1.9 var(--mono);color:var(--muted);flex:none}
+
+  table.specs{width:100%;border-collapse:collapse;font-size:13.5px}
+  table.specs td{padding:6px 0;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  table.specs td:first-child{width:34%;color:var(--muted);padding-right:14px}
+  table.specs tr:last-child td{border-bottom:0}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font:500 12.5px var(--mono);background:var(--surface-2);border:1px solid var(--line-soft);border-radius:4px;padding:2px 7px}
+
+  ul.sources{list-style:none;margin:0;padding:0;font-size:13.5px}
+  ul.sources li{padding:5px 0;border-bottom:1px solid var(--line-soft);display:flex;gap:10px}
+  ul.sources li:last-child{border-bottom:0}
+  ul.sources .n{color:var(--muted);font:500 12px/1.7 var(--mono);flex:none}
+  .queries{margin:0 0 10px;display:flex;flex-wrap:wrap;gap:6px}
+  .queries .chip{background:#EDF5F3;border-color:#B9D2CC;color:var(--go-hi)}
+  .entrypoint{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-soft)}
+
+  .actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
+
+  .working{max-width:640px}
+  .working h1{font:600 22px/1.2 var(--mono);margin:0 0 4px}
+  .log{margin-top:16px;border-left:2px solid var(--line);padding-left:14px;font-size:13.5px;color:var(--muted)}
+  .log div{padding:3px 0}
+  .log div:last-child{color:var(--ink)}
+
+  dialog{border:1px solid var(--line);border-radius:9px;padding:0;width:min(620px,92vw);background:var(--surface);color:var(--ink)}
+  dialog::backdrop{background:rgba(21,26,32,.45)}
+  .dlg-head{display:flex;align-items:center;padding:15px 18px;border-bottom:1px solid var(--line-soft)}
+  .dlg-head h2{margin:0;font-size:16px;flex:1}
+  .dlg-body{padding:18px;max-height:64vh;overflow-y:auto}
+  .dlg-foot{display:flex;gap:9px;justify-content:flex-end;padding:13px 18px;border-top:1px solid var(--line-soft);background:var(--surface-2);border-radius:0 0 9px 9px}
+  fieldset{border:0;border-top:1px solid var(--line-soft);margin:0 0 16px;padding:14px 0 0}
+  fieldset:first-child{border-top:0;padding-top:0}
+  legend{font-size:12.5px;font-weight:600;color:var(--muted);padding:0}
+  .check{display:flex;gap:8px;align-items:flex-start;font-size:13.5px}
+  .check input{margin-top:3px}
+  .callout{background:var(--surface-2);border:1px solid var(--line-soft);border-radius:6px;padding:11px 13px;font-size:13px;line-height:1.5;margin-top:10px}
+  .callout b{font-weight:600}
+
+  #toast{
+    position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(8px);
+    background:var(--ink);color:#fff;padding:9px 16px;border-radius:6px;
+    font-size:13.5px;opacity:0;pointer-events:none;transition:opacity .16s,transform .16s;z-index:60;
+  }
+  #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  @media (max-width:900px){
+    main{grid-template-columns:1fr;height:auto}
+    aside{border-right:0;border-bottom:1px solid var(--line);height:auto}
+    #stage{height:auto;padding:18px}
+    .gauge .track{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="wordmark">Parts Desk <span class="sub">listing builder</span></div>
+  <div class="spacer"></div>
+  <div class="gauges">
+    <div class="gauge" title="Listings you have finished today">
+      <span><b id="tally-n">0</b> / <span id="tally-target">40</span> listings</span>
+      <div class="track"><div class="fill" id="tally-fill"></div></div>
+    </div>
+    <div class="gauge" title="Free grounded searches used today. Resets midnight US Pacific.">
+      <span><b id="quota-n">0</b> / 500 free searches</span>
+      <div class="track"><div class="fill" id="quota-fill"></div></div>
+    </div>
+  </div>
+  <button class="btn" id="btn-settings">Settings</button>
+</header>
+
+<main>
+  <aside>
+    <div class="field">
+      <label for="parts">Part numbers</label>
+      <textarea id="parts" spellcheck="false" placeholder="YF8P5&#10;0X8DXD&#10;5CX56AA"></textarea>
+      <div class="hint">One per line. They run in order, so you can queue a batch and walk away.</div>
+    </div>
+
+    <div class="field duo">
+      <div>
+        <label for="brand">Brand hint</label>
+        <select id="brand">
+          <option value="">Work it out</option>
+          <option>Dell</option><option>HP</option><option>Lenovo</option>
+          <option>Jabra</option><option>Poly</option><option>NVIDIA</option>
+          <option>AMD</option><option>Seagate</option><option>Intel</option>
+          <option>Cisco</option><option>Western Digital</option><option>Logitech</option>
+        </select>
+      </div>
+      <div>
+        <label for="condition">Condition</label>
+        <select id="condition">
+          <option>New</option><option>New (open box)</option>
+          <option>Refurbished</option><option>Used — tested</option>
+          <option value="">Not stated</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn primary" id="run">Build listings</button>
+    <div class="hint" style="text-align:center">Ctrl + Enter</div>
+
+    <div class="queue-head">
+      <h2>Queue</h2>
+      <button class="btn tiny" id="btn-csv">Export CSV</button>
+    </div>
+    <ol id="queue"></ol>
+    <div class="hint" id="queue-empty">Nothing queued yet.</div>
+  </aside>
+
+  <section id="stage"></section>
+</main>
+
+<dialog id="settings">
+  <form method="dialog">
+    <div class="dlg-head"><h2>Settings</h2></div>
+    <div class="dlg-body">
+
+      <fieldset>
+        <legend>Google AI Studio key</legend>
+        <div class="field" style="margin-top:8px">
+          <input type="password" id="s-key" placeholder="AIza..." autocomplete="off" spellcheck="false">
+          <div class="hint">Get one free at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Stored in this browser only — never put it in the repository.</div>
+        </div>
+        <div class="callout">
+          <b>Keep this key on the free tier.</b> Don't attach a billing account to its Google Cloud project. A key with no billing account cannot generate a charge — when you reach the daily limit it simply stops until the quota resets, rather than billing you for the overflow.
+        </div>
+        <div class="callout">
+          <b>Everyone needs their own key.</b> Google counts usage per project, not per key, so a shared key means a shared 500-a-day pool. One key each and you each get your own.
+        </div>
+        <div class="field" style="margin-top:14px">
+          <label for="s-model">Model</label>
+          <select id="s-model">
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash — better research (default)</option>
+            <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite — faster, lighter</option>
+          </select>
+          <div class="hint">Only these two include free Google Search on the free tier. The Gemini 3 models charge for search from the first query, so they aren't offered here.</div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Pacing</legend>
+        <div class="duo" style="margin-top:10px">
+          <div class="field">
+            <label for="s-gap">Seconds between listings</label>
+            <input type="number" id="s-gap" min="0" max="60">
+          </div>
+          <div class="field">
+            <label for="s-retries">Retries on rate limit</label>
+            <input type="number" id="s-retries" min="0" max="8">
+          </div>
+        </div>
+        <div class="hint" style="margin-top:-6px">The free tier allows only a few requests a minute. A gap of 4–6 seconds keeps a long batch from tripping the limit. When it trips anyway, the app waits as long as Google asks and picks up where it left off.</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Listing rules</legend>
+        <div class="field" style="margin-top:8px">
+          <label for="s-rules">House style</label>
+          <textarea id="s-rules" rows="5" spellcheck="false"></textarea>
+          <div class="hint">Anything your listings always need: wording to avoid, a warranty line, how to phrase compatibility.</div>
+        </div>
+        <div class="duo">
+          <div class="field">
+            <label for="s-title-max">Title limit</label>
+            <input type="number" id="s-title-max" min="60" max="500">
+          </div>
+          <div class="field">
+            <label for="s-desc-max">Description limit</label>
+            <input type="number" id="s-desc-max" min="200" max="5000">
+          </div>
+        </div>
+        <div class="check">
+          <input type="checkbox" id="s-pn-title">
+          <label for="s-pn-title">Put the part number in the title. Buyers in this market search by part number, so it usually earns its characters.</label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Daily target</legend>
+        <div class="duo" style="margin-top:10px">
+          <div class="field">
+            <label for="s-target">Listings per day</label>
+            <input type="number" id="s-target" min="1" max="500">
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <button type="button" class="btn" id="btn-reset-tally">Reset today's count</button>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Stored data</legend>
+        <p class="hint" style="margin-top:10px">Settings, counts and the current queue live in this browser. Clearing removes all of it, including the key.</p>
+        <button type="button" class="btn danger" id="btn-wipe">Clear everything</button>
+      </fieldset>
+
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="btn" id="s-cancel">Cancel</button>
+      <button class="btn primary" value="save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ============================================================
+   Parts Desk — a single-file listing builder for IT hardware.
+
+   Runs entirely in the browser against the Gemini API free tier.
+   Two calls per part number:
+     1. grounded research  (Google Search, counts against 500/day)
+     2. formatting to JSON (no search, strict response schema)
+   ============================================================ */
+
+const $ = (id) => document.getElementById(id);
+const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
+const GROUNDED_PER_DAY = 500;
+
+/* ---------- storage (degrades to memory if blocked) ---------- */
+const mem = {};
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch { return mem[k] ?? null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch { mem[k]=v; } },
+  del(k){ try { localStorage.removeItem(k); } catch { delete mem[k]; } }
+};
+
+const DEFAULTS = {
+  apiKey:"", model:"gemini-2.5-flash",
+  gapSeconds:5, retries:4,
+  rules:"", titleMax:200, descMax:2000, pnInTitle:true, target:40
+};
+let settings = Object.assign({}, DEFAULTS);
+try { Object.assign(settings, JSON.parse(store.get("pd.settings") || "{}")); } catch {}
+function saveSettings(){ store.set("pd.settings", JSON.stringify(settings)); }
+
+/* ---------- counters ----------
+   Listings are counted on the local day. The grounding quota is
+   counted on the US Pacific day, because that is when Google
+   resets it. Mixing the two would show a wrong number every
+   evening outside the Americas. */
+function localDay(){ return new Date().toLocaleDateString("en-CA"); }
+function pacificDay(){
+  try { return new Date().toLocaleDateString("en-CA", { timeZone:"America/Los_Angeles" }); }
+  catch { return localDay(); }
+}
+
+let tally = { date: localDay(), n: 0 };
+try {
+  const t = JSON.parse(store.get("pd.tally") || "null");
+  if (t && t.date === localDay()) tally = t;
+} catch {}
+
+let quota = { date: pacificDay(), n: 0 };
+try {
+  const q = JSON.parse(store.get("pd.quota") || "null");
+  if (q && q.date === pacificDay()) quota = q;
+} catch {}
+
+function drawGauges(){
+  $("tally-n").textContent = tally.n;
+  $("tally-target").textContent = settings.target;
+  $("tally-fill").style.width = Math.min(100, (tally.n / Math.max(1, settings.target)) * 100) + "%";
+
+  $("quota-n").textContent = quota.n;
+  const pct = Math.min(100, (quota.n / GROUNDED_PER_DAY) * 100);
+  const fill = $("quota-fill");
+  fill.style.width = pct + "%";
+  fill.className = "fill" + (pct >= 95 ? " bad" : pct >= 80 ? " warn" : "");
+}
+function bumpTally(){
+  if (tally.date !== localDay()) tally = { date: localDay(), n: 0 };
+  tally.n++; store.set("pd.tally", JSON.stringify(tally)); drawGauges();
+}
+function bumpQuota(){
+  if (quota.date !== pacificDay()) quota = { date: pacificDay(), n: 0 };
+  quota.n++; store.set("pd.quota", JSON.stringify(quota)); drawGauges();
+}
+
+/* ---------- app state ---------- */
+const state = { items:[], activeId:null, running:false, abort:null };
+let nextId = 1;
+
+try {
+  const saved = JSON.parse(store.get("pd.items") || "[]");
+  if (Array.isArray(saved) && saved.length){
+    state.items = saved.map(it => ({ ...it, log: [] }));
+    nextId = Math.max(...state.items.map(i => i.id)) + 1;
+    state.activeId = state.items[state.items.length-1].id;
+  }
+} catch {}
+
+function persistItems(){
+  try {
+    const slim = state.items.map(({id,part,status,data,error,opts}) => ({id,part,status,data,error,opts}));
+    store.set("pd.items", JSON.stringify(slim).slice(0, 4000000));
+  } catch {}
+}
+
+function toast(msg){
+  const el = $("toast");
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove("on"), 2400);
+}
+
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  const t = setTimeout(resolve, ms);
+  if (signal) signal.addEventListener("abort", () => {
+    clearTimeout(t);
+    reject(Object.assign(new Error("Aborted"), { name:"AbortError" }));
+  }, { once:true });
+});
+
+/* ============================================================
+   Gemini API
+   ============================================================ */
+
+function apiUrl(model){ return API_BASE + encodeURIComponent(model) + ":generateContent"; }
+
+function readableError(status, payload){
+  const msg = payload?.error?.message || "";
+  if (status === 400 && /API key not valid|API_KEY_INVALID/i.test(msg))
+    return "That API key isn't valid. Check it in Settings, or make a new one at aistudio.google.com/apikey.";
+  if (status === 403 && /referer|referrer|blocked/i.test(msg))
+    return "The key is restricted and this site isn't on its allowed list. In Google Cloud Console, either remove the restriction or add this page's address to the allowed referrers.";
+  if (status === 403)
+    return "The key was refused. Make sure the Generative Language API is enabled for its project. " + msg;
+  if (status === 429)
+    return "Free tier limit reached. This costs nothing — it just means waiting. Daily quotas reset at midnight US Pacific.";
+  if (status === 503 || status === 500)
+    return "Google's servers are busy. Trying again in a moment usually clears it.";
+  if (status === 404)
+    return "That model name wasn't found. Pick another one in Settings.";
+  return `API error ${status}. ${msg}`;
+}
+
+/* Google returns a suggested wait on 429s; honour it rather than guessing. */
+function retryDelayMs(payload){
+  const details = payload?.error?.details || [];
+  for (const d of details){
+    if (typeof d.retryDelay === "string"){
+      const m = d.retryDelay.match(/^([\d.]+)s$/);
+      if (m) return Math.ceil(parseFloat(m[1]) * 1000);
+    }
+  }
+  return 0;
+}
+
+async function callGemini(body, { signal, onNote } = {}){
+  const attempts = Math.max(0, settings.retries) + 1;
+  let lastErr = null;
+
+  for (let attempt = 0; attempt < attempts; attempt++){
+    let res, payload;
+    try {
+      res = await fetch(apiUrl(settings.model), {
+        method:"POST",
+        headers:{ "content-type":"application/json", "x-goog-api-key": settings.apiKey },
+        body: JSON.stringify(body),
+        signal
+      });
+    } catch (e){
+      if (e.name === "AbortError") throw e;
+      throw new Error("Couldn't reach Google. Check your connection and try again.");
+    }
+
+    try { payload = await res.json(); } catch { payload = null; }
+
+    if (res.ok) return payload;
+
+    const retryable = res.status === 429 || res.status === 503 || res.status === 500;
+    lastErr = new Error(readableError(res.status, payload));
+    if (!retryable || attempt === attempts - 1) throw lastErr;
+
+    const wait = retryDelayMs(payload) || Math.min(60000, 4000 * Math.pow(2, attempt));
+    onNote?.(`Rate limited. Waiting ${Math.round(wait/1000)}s, then carrying on.`);
+    await sleep(wait, signal);
+  }
+  throw lastErr;
+}
+
+function textOf(payload){
+  const parts = payload?.candidates?.[0]?.content?.parts || [];
+  return parts.map(p => p.text || "").join("");
+}
+
+/* Sources come from Google's grounding metadata rather than from the
+   model's own writing, so they can't be invented. */
+function groundingOf(payload){
+  const g = payload?.candidates?.[0]?.groundingMetadata || {};
+  const seen = new Set();
+  const sources = [];
+  for (const chunk of (g.groundingChunks || [])){
+    const w = chunk.web; if (!w?.uri) continue;
+    const key = w.uri;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sources.push({ title: w.title || w.domain || "Source", url: w.uri, domain: w.domain || w.title || "" });
+  }
+  return {
+    sources,
+    queries: g.webSearchQueries || [],
+    entryPoint: g.searchEntryPoint?.renderedContent || ""
+  };
+}
+
+function blockedReason(payload){
+  if (payload?.promptFeedback?.blockReason) return payload.promptFeedback.blockReason;
+  const fr = payload?.candidates?.[0]?.finishReason;
+  if (fr && !["STOP","MAX_TOKENS"].includes(fr)) return fr;
+  return null;
+}
+
+/* ============================================================
+   Prompts
+   ============================================================ */
+
+const ACCURACY_RULES = `Accuracy matters more than completeness. This copy gets published as written, so a wrong specification is worse than a missing one.
+- State a specification only if it appears in a search result you actually retrieved. Do not infer specs from part numbers that look similar, and do not fall back on general knowledge about the product line.
+- Never invent capacities, speeds, socket or chipset names, port counts, panel sizes, resolutions, colours, dimensions or weights.
+- Claim compatibility with a system only where a source lists that system.
+- Trust manufacturer pages and official spec sheets first, then large distributors and parts specialists, then general marketplaces. Marketplace listings are weak evidence because sellers get part numbers wrong.
+- If the number matches several different products, or you cannot confirm what it is, say so plainly rather than picking the most likely one.`;
+
+function researchPrompt(part, opts){
+  const lines = [];
+  lines.push(`You research computer hardware part numbers for a business that resells IT equipment: systems and components from Dell, HP, Lenovo, Jabra, Poly, NVIDIA, AMD, Seagate and similar makers, plus panels, bezels, cables, adapters, docks and spare parts.`);
+  lines.push("");
+  lines.push(`Search the web and work out exactly what this part is.`);
+  lines.push("");
+  lines.push(`Part number: ${part}`);
+  if (opts.brand) lines.push(`Brand suggested by the operator (verify it, don't assume it): ${opts.brand}`);
+  lines.push("");
+  lines.push(ACCURACY_RULES);
+  lines.push("");
+  lines.push(`Search from several angles rather than repeating one phrasing: the bare part number; the part number with the brand; the part number with words such as specifications, spec sheet, datasheet or replacement; and the part number with a likely product type. If early results are thin, try it with and without leading zeros, and check whether it is an assembly, service or option part number that maps to a different marketing name.`);
+  lines.push("");
+  lines.push(`Then write a plain-text research brief covering:`);
+  lines.push(`- Brand, model or series, and what the part physically is.`);
+  lines.push(`- Every specification you could confirm, with the kind of source each came from.`);
+  lines.push(`- Systems or models a source explicitly lists it as fitting.`);
+  lines.push(`- Equivalent, superseding or superseded part numbers.`);
+  lines.push(`- How confident you are, and anything that didn't line up between sources.`);
+  lines.push("");
+  lines.push(`Write the brief for a colleague, not for a customer. No marketing language. If you could not identify the part, say that clearly and explain what you did find.`);
+  return lines.join("\n");
+}
+
+function formatPrompt(part, opts, brief){
+  const t = settings.titleMax, d = settings.descMax;
+  const lines = [];
+  lines.push(`Below is a research brief on a computer hardware part number. Turn it into listing copy for a marketplace.`);
+  lines.push("");
+  lines.push(`Use only what the brief contains. Do not add specifications, compatibility or model names that aren't in it. If the brief says something is unconfirmed, either leave it out or record it in "warnings" — never present it as fact.`);
+  lines.push("");
+  lines.push(`Write for a buyer who searches by part number and then skims for whether it fits. Plain, concrete, specific. No marketing adjectives, no exclamation marks, no invented benefits, no first person. Never write a placeholder like "N/A" or "Unknown" into the title, bullets or description — leave the detail out instead.`);
+  lines.push("");
+  lines.push(`Field rules:`);
+  lines.push(`- title: at most ${t} characters, counted as characters. Brand first, then model or series, then the product type, then the two to four specifications a buyer filters on.${settings.pnInTitle ? " Include the part number, since buyers search for it." : " Do not include the part number."} No pipes, no ALL CAPS words, no repeated words, no filler such as "High Quality" or "Fast Shipping".`);
+  lines.push(`- bullets: exactly five, each a complete statement under 200 characters, each opening with the concrete detail rather than a label. Cover different ground in each: what it is and where it goes; the headline specification; a second specification or physical detail; compatibility or what it replaces, only where the brief supports it; and condition or what is in the box. Do not restate the title.`);
+  lines.push(`- description: at most ${d} characters, counted as characters. Two to four short paragraphs of plain prose, no headings and no bullet characters. Open with the brand, model and part number so the first line works as a search snippet. Then what it does and where it fits, then the specifications, then condition and anything worth checking before ordering. Let the main search terms recur naturally two or three times across the whole text, no more.`);
+  lines.push(`- specs: up to twelve rows taken from the brief.`);
+  lines.push(`- warnings: what the operator must check before publishing — ambiguity about which product this is, disagreement between sources, thin sourcing. Empty if the brief was solid.`);
+  lines.push(`- confidence: how well the brief pins this part down.`);
+  lines.push("");
+  lines.push(`Part number: ${part}`);
+  if (opts.condition) lines.push(`Condition to state: ${opts.condition}`);
+  if (settings.rules && settings.rules.trim()){
+    lines.push("");
+    lines.push(`House rules from the operator. These override the guidance above where they conflict:`);
+    lines.push(settings.rules.trim());
+  }
+  lines.push("");
+  lines.push(`Count the characters of the title and description before answering, and shorten them if they run over.`);
+  lines.push("");
+  lines.push(`--- RESEARCH BRIEF ---`);
+  lines.push(brief);
+  return lines.join("\n");
+}
+
+const LISTING_SCHEMA = {
+  type:"object",
+  properties:{
+    part_number:{ type:"string" },
+    brand:{ type:"string" },
+    model:{ type:"string" },
+    product_type:{ type:"string" },
+    identified:{ type:"boolean" },
+    confidence:{ type:"string", enum:["high","medium","low"] },
+    title:{ type:"string" },
+    bullets:{ type:"array", items:{ type:"string" } },
+    description:{ type:"string" },
+    specs:{ type:"array", items:{
+      type:"object",
+      properties:{ label:{ type:"string" }, value:{ type:"string" } },
+      required:["label","value"],
+      propertyOrdering:["label","value"]
+    }},
+    compatibility:{ type:"array", items:{ type:"string" } },
+    alternate_part_numbers:{ type:"array", items:{ type:"string" } },
+    warnings:{ type:"array", items:{ type:"string" } }
+  },
+  required:["part_number","brand","model","product_type","identified","confidence",
+            "title","bullets","description","specs","compatibility",
+            "alternate_part_numbers","warnings"],
+  propertyOrdering:["part_number","brand","model","product_type","identified","confidence",
+                    "title","bullets","description","specs","compatibility",
+                    "alternate_part_numbers","warnings"]
+};
+
+/* ============================================================
+   The two-step run
+   ============================================================ */
+
+async function research(part, opts, onNote, signal){
+  onNote({ text:"Searching Google for " + part });
+
+  const payload = await callGemini({
+    contents:[{ role:"user", parts:[{ text: researchPrompt(part, opts) }] }],
+    tools:[{ google_search:{} }],
+    generationConfig:{ temperature:0.2, maxOutputTokens:8192 }
+  }, { signal, onNote: (t) => onNote({ text:t }) });
+
+  bumpQuota();
+
+  const blocked = blockedReason(payload);
+  const brief = textOf(payload).trim();
+  const grounding = groundingOf(payload);
+
+  if (!brief){
+    throw new Error(blocked
+      ? `The research step came back empty (${blocked}). Try running this part number again.`
+      : "The research step came back empty. Try running this part number again.");
+  }
+
+  if (grounding.queries.length) onNote({ queries: grounding.queries });
+  onNote({ text:`Read ${grounding.sources.length} source${grounding.sources.length === 1 ? "" : "s"}. Writing the listing.` });
+
+  const formatted = await callGemini({
+    contents:[{ role:"user", parts:[{ text: formatPrompt(part, opts, brief) }] }],
+    generationConfig:{
+      temperature:0.3,
+      maxOutputTokens:4096,
+      responseMimeType:"application/json",
+      responseSchema: LISTING_SCHEMA,
+      thinkingConfig:{ thinkingBudget:0 }
+    }
+  }, { signal, onNote: (t) => onNote({ text:t }) });
+
+  const raw = textOf(formatted).trim();
+  const data = extractJson(raw);
+  if (!data) throw new Error("The listing came back unreadable. Try running this part number again.");
+
+  data._grounding = grounding;
+  data._brief = brief;
+  return data;
+}
+
+/* The schema makes clean JSON the norm, but a truncated or fenced
+   reply still turns up occasionally, so parse defensively. */
+function extractJson(text){
+  if (!text) return null;
+  try {
+    const direct = JSON.parse(text);
+    if (direct && typeof direct === "object") return direct;
+  } catch {}
+
+  const candidates = [];
+  for (let i = 0; i < text.length; i++){
+    if (text[i] !== "{") continue;
+    let depth = 0, inStr = false, esc = false;
+    for (let j = i; j < text.length; j++){
+      const c = text[j];
+      if (inStr){
+        if (esc) esc = false;
+        else if (c === "\\") esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === "{") depth++;
+      else if (c === "}"){
+        depth--;
+        if (depth === 0){ candidates.push(text.slice(i, j+1)); i = j; break; }
+      }
+    }
+  }
+  for (let k = candidates.length - 1; k >= 0; k--){
+    try {
+      const o = JSON.parse(candidates[k]);
+      if (o && typeof o === "object" && ("title" in o || "bullets" in o)) return o;
+    } catch {}
+  }
+  return null;
+}
+
+/* A short follow-up with no search, used to trim an overlong field. */
+async function shorten(field, value, limit){
+  const payload = await callGemini({
+    contents:[{ role:"user", parts:[{ text:
+`Rewrite this product listing ${field} so it is at most ${limit} characters. It is currently ${value.length}.
+
+Keep every factual claim. Cut filler, repetition and the least useful detail first. Do not add anything new. Keep the same tone and the same opening terms.
+
+Return only the rewritten ${field}, with no preamble and no quotation marks around it.
+
+---
+${value}` }]}],
+    generationConfig:{ temperature:0.3, maxOutputTokens:2048, thinkingConfig:{ thinkingBudget:0 } }
+  }, {});
+  return textOf(payload).trim();
+}
+
+/* ============================================================
+   Queue
+   ============================================================ */
+
+function parsePartNumbers(raw){
+  // Strips list markers ("- ", "3) ") without touching part numbers
+  // that legitimately begin with a digit, such as 0X8DXD.
+  return raw.split(/[\n,;]+/)
+    .map(s => s.trim().replace(/^(?:[-*•]|\d{1,3}[.)])\s+/, "").trim())
+    .filter(Boolean)
+    .filter((v,i,a) => a.indexOf(v) === i)
+    .slice(0, 60);
+}
+
+async function runQueue(){
+  if (state.running){ state.abort?.abort(); return; }
+
+  if (!settings.apiKey){
+    openSettings();
+    toast("Add your free Google AI Studio key to get started.");
+    return;
+  }
+
+  const parts = parsePartNumbers($("parts").value);
+  if (!parts.length){ toast("Enter at least one part number."); return; }
+
+  if (quota.n + parts.length > GROUNDED_PER_DAY){
+    const left = Math.max(0, GROUNDED_PER_DAY - quota.n);
+    if (!confirm(`You have ${left} free searches left today and queued ${parts.length}. The ones past the limit will fail until the quota resets at midnight US Pacific. Nothing will be charged either way. Run anyway?`)) return;
+  }
+
+  const opts = { brand: $("brand").value, condition: $("condition").value };
+  const batch = parts.map(p => ({
+    id: nextId++, part:p, status:"queued", data:null, error:null, log:[], opts
+  }));
+  state.items.push(...batch);
+  drawQueue();
+
+  state.running = true;
+  state.abort = new AbortController();
+  $("run").textContent = "Stop";
+  $("run").classList.remove("primary");
+
+  for (let i = 0; i < batch.length; i++){
+    const item = batch[i];
+    if (state.abort.signal.aborted){ item.status = "queued"; continue; }
+
+    item.status = "running";
+    item.log = [];
+    state.activeId = item.id;
+    drawQueue(); draw();
+
+    try {
+      const data = await research(item.part, item.opts, (e) => {
+        item.log.push(e);
+        if (state.activeId === item.id) draw();
+      }, state.abort.signal);
+
+      item.data = normalise(data, item.part);
+      item.status = needsReview(item.data) ? "review" : "done";
+      bumpTally();
+    } catch (err){
+      if (err.name === "AbortError"){ item.status = "queued"; break; }
+      item.status = "error";
+      item.error = err.message || String(err);
+    }
+
+    drawQueue(); persistItems();
+    if (state.activeId === item.id) draw();
+
+    // Pace the batch so the free tier's per-minute limit isn't tripped.
+    if (i < batch.length - 1 && settings.gapSeconds > 0){
+      try { await sleep(settings.gapSeconds * 1000, state.abort.signal); }
+      catch { break; }
+    }
+  }
+
+  state.running = false;
+  state.abort = null;
+  $("run").textContent = "Build listings";
+  $("run").classList.add("primary");
+  drawQueue();
+}
+
+function normalise(d, part){
+  const s = (v) => (typeof v === "string" ? v.trim() : "");
+  const arr = (v) => Array.isArray(v) ? v : [];
+  const bullets = arr(d.bullets).map(s).filter(Boolean);
+  while (bullets.length < 5) bullets.push("");
+  const g = d._grounding || { sources:[], queries:[], entryPoint:"" };
+  return {
+    part_number: s(d.part_number) || part,
+    brand: s(d.brand),
+    model: s(d.model),
+    product_type: s(d.product_type),
+    identified: d.identified !== false,
+    confidence: ["high","medium","low"].includes(d.confidence) ? d.confidence : "medium",
+    title: s(d.title),
+    bullets: bullets.slice(0,5),
+    description: s(d.description),
+    specs: arr(d.specs).filter(x => x && (x.label || x.value))
+             .map(x => ({ label:s(x.label), value:s(x.value) })).slice(0,14),
+    compatibility: arr(d.compatibility).map(s).filter(Boolean),
+    alternate_part_numbers: arr(d.alternate_part_numbers).map(s).filter(Boolean),
+    warnings: arr(d.warnings).map(s).filter(Boolean),
+    sources: g.sources,
+    queries: g.queries,
+    entryPoint: g.entryPoint
+  };
+}
+
+function needsReview(d){
+  return !d.identified
+      || d.confidence === "low"
+      || d.warnings.length > 0
+      || d.title.length > settings.titleMax
+      || d.description.length > settings.descMax
+      || d.sources.length < 2;
+}
+
+/* ============================================================
+   Rendering
+   ============================================================ */
+
+function drawQueue(){
+  const ol = $("queue");
+  ol.innerHTML = "";
+  $("queue-empty").style.display = state.items.length ? "none" : "block";
+  for (const it of state.items){
+    const li = document.createElement("li");
+    li.dataset.status = it.status;
+    li.setAttribute("aria-current", String(it.id === state.activeId));
+    li.innerHTML = `<span class="dot"></span><span class="pn"></span>`;
+    li.querySelector(".pn").textContent = it.part;
+    li.onclick = () => { state.activeId = it.id; drawQueue(); draw(); };
+    ol.appendChild(li);
+  }
+}
+
+function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function draw(){
+  const stage = $("stage");
+  const item = state.items.find(i => i.id === state.activeId);
+
+  if (!item){ stage.innerHTML = emptyView(); return; }
+  if (item.status === "running"){ stage.innerHTML = workingView(item); return; }
+  if (item.status === "error"){ stage.innerHTML = errorView(item); wireRetry(item); return; }
+  if (!item.data){ stage.innerHTML = emptyView(); return; }
+
+  stage.innerHTML = resultView(item);
+  wireResult(item);
+  wireRetry(item);
+}
+
+function wireRetry(item){
+  const retry = $("btn-retry");
+  if (!retry) return;
+  retry.onclick = () => {
+    $("parts").value = item.part;
+    $("brand").value = item.opts?.brand || "";
+    $("condition").value = item.opts?.condition ?? "New";
+    runQueue();
+  };
+}
+
+function emptyView(){
+  return `<div class="empty">
+    <h1>Give it a part number.</h1>
+    <p>It searches Google, works out what the part actually is, and writes the title, five bullets and the description — with the sources it used, so you can spot-check anything that matters.</p>
+    <ol>
+      <li>Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> and paste it into <b>Settings</b>.</li>
+      <li>Paste your part numbers, one per line — <code>YF8P5</code>, <code>0X8DXD</code>.</li>
+      <li>Press <b>Build listings</b> and let the batch run.</li>
+    </ol>
+    <p>Every field is editable before you copy it, and <b>Export CSV</b> pulls the whole batch out at once.</p>
+  </div>`;
+}
+
+function workingView(item){
+  const rows = item.log.map(e => {
+    if (e.queries) return `<div>Searched: ${e.queries.map(q => esc(q)).join(", ")}</div>`;
+    return `<div>${esc(e.text || "")}</div>`;
+  }).join("");
+  return `<div class="working">
+    <h1>${esc(item.part)}</h1>
+    <p class="meta">Researching, then writing. Usually well under a minute.</p>
+    <div class="log">${rows}</div>
+  </div>`;
+}
+
+function errorView(item){
+  return `<div class="result">
+    <div class="result-head"><h1>${esc(item.part)}</h1></div>
+    <div class="note bad"><b>Didn't finish.</b><br>${esc(item.error)}</div>
+    <div class="actions"><button class="btn" id="btn-retry">Try this one again</button></div>
+  </div>`;
+}
+
+function resultView(item){
+  const d = item.data;
+  const conf = d.confidence === "high" && d.identified ? ["ok","Confident"]
+             : d.confidence === "low" || !d.identified ? ["bad","Needs checking"]
+             : ["warn","Reasonably sure"];
+
+  const warn = (!d.identified || d.warnings.length || d.sources.length < 2) ? `
+    <div class="note">
+      <b>Check before publishing.</b>
+      <ul>
+        ${!d.identified ? "<li>The part number couldn't be pinned to one product with confidence.</li>" : ""}
+        ${d.sources.length < 2 ? "<li>Only " + d.sources.length + " source came back, so nothing corroborates the specs.</li>" : ""}
+        ${d.warnings.map(w => "<li>" + esc(w) + "</li>").join("")}
+      </ul>
+    </div>` : "";
+
+  const bullets = d.bullets.map((b,i) => `
+    <div class="bullet-row">
+      <span class="mark">${i+1}</span>
+      <textarea class="editable b-edit" data-i="${i}" rows="1">${esc(b)}</textarea>
+      <span class="len" data-len="${i}">${b.length}</span>
+    </div>`).join("");
+
+  const specs = d.specs.length ? `
+    <div class="panel">
+      <div class="panel-head"><h3>Specifications found</h3>
+        <button class="btn tiny" data-copy="specs">Copy</button></div>
+      <div class="panel-body">
+        <table class="specs">${d.specs.map(s => `<tr><td>${esc(s.label)}</td><td>${esc(s.value)}</td></tr>`).join("")}</table>
+      </div>
+    </div>` : "";
+
+  const compat = d.compatibility.length ? `
+    <div class="panel">
+      <div class="panel-head"><h3>Listed as compatible with</h3></div>
+      <div class="panel-body"><div class="chips">${d.compatibility.map(c => `<span class="chip">${esc(c)}</span>`).join("")}</div></div>
+    </div>` : "";
+
+  const alts = d.alternate_part_numbers.length ? `
+    <div class="panel">
+      <div class="panel-head"><h3>Equivalent part numbers</h3></div>
+      <div class="panel-body"><div class="chips">${d.alternate_part_numbers.map(c => `<span class="chip">${esc(c)}</span>`).join("")}</div></div>
+    </div>` : "";
+
+  const sources = `
+    <div class="panel">
+      <div class="panel-head"><h3>Sources</h3></div>
+      <div class="panel-body">
+        ${d.queries?.length ? `<div class="queries">${d.queries.map(q => `<span class="chip">${esc(q)}</span>`).join("")}</div>` : ""}
+        ${d.sources.length ? `<ul class="sources">${d.sources.map((s,i) => `
+          <li><span class="n">${i+1}</span>
+            <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a></li>`).join("")}</ul>`
+          : `<p class="hint" style="margin:0">No sources came back. Treat everything above as unverified.</p>`}
+        ${d.entryPoint ? `<div class="entrypoint">${d.entryPoint}</div>` : ""}
+      </div>
+    </div>`;
+
+  return `<div class="result">
+    <div class="result-head">
+      <h1>${esc(d.part_number)}</h1>
+      <span class="badge ${conf[0]}" style="margin-top:6px">${conf[1]}</span>
+    </div>
+    <p class="meta">${esc([d.brand, d.model, d.product_type].filter(Boolean).join(" · ")) || "Unidentified part"}</p>
+
+    ${warn}
+
+    <div class="actions">
+      <button class="btn primary" data-copy="all">Copy the whole listing</button>
+      <button class="btn" id="btn-retry">Run it again</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Title</h3>
+        <span class="count" id="c-title">0</span>
+        <button class="btn tiny" id="btn-trim-title" hidden>Shorten</button>
+        <button class="btn tiny" data-copy="title">Copy</button>
+      </div>
+      <div class="panel-body"><textarea class="editable" id="f-title" rows="2">${esc(d.title)}</textarea></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Bullet points</h3><button class="btn tiny" data-copy="bullets">Copy</button></div>
+      <div class="panel-body">${bullets}</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Description</h3>
+        <span class="count" id="c-desc">0</span>
+        <button class="btn tiny" id="btn-trim-desc" hidden>Shorten</button>
+        <button class="btn tiny" data-copy="desc">Copy</button>
+      </div>
+      <div class="panel-body"><textarea class="editable" id="f-desc" rows="12">${esc(d.description)}</textarea></div>
+    </div>
+
+    ${specs}${compat}${alts}${sources}
+  </div>`;
+}
+
+function autoGrow(el){ el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
+
+function wireResult(item){
+  const d = item.data;
+  const title = $("f-title"), desc = $("f-desc");
+
+  const syncTitle = () => {
+    d.title = title.value;
+    const n = title.value.length, over = n > settings.titleMax;
+    const c = $("c-title");
+    c.textContent = `${n} / ${settings.titleMax}`;
+    c.classList.toggle("over", over);
+    $("btn-trim-title").hidden = !over;
+    autoGrow(title);
+  };
+  const syncDesc = () => {
+    d.description = desc.value;
+    const n = desc.value.length, over = n > settings.descMax;
+    const c = $("c-desc");
+    c.textContent = `${n} / ${settings.descMax}`;
+    c.classList.toggle("over", over);
+    $("btn-trim-desc").hidden = !over;
+    autoGrow(desc);
+  };
+
+  title.addEventListener("input", () => { syncTitle(); persistItems(); });
+  desc.addEventListener("input", () => { syncDesc(); persistItems(); });
+  syncTitle(); syncDesc();
+
+  document.querySelectorAll(".b-edit").forEach(el => {
+    autoGrow(el);
+    el.addEventListener("input", () => {
+      const i = +el.dataset.i;
+      d.bullets[i] = el.value;
+      document.querySelector(`[data-len="${i}"]`).textContent = el.value.length;
+      autoGrow(el);
+      persistItems();
+    });
+  });
+
+  document.querySelectorAll("[data-copy]").forEach(btn => {
+    btn.onclick = async () => {
+      const what = btn.dataset.copy;
+      let text = "";
+      if (what === "title") text = d.title;
+      else if (what === "desc") text = d.description;
+      else if (what === "bullets") text = d.bullets.filter(Boolean).join("\n");
+      else if (what === "specs") text = d.specs.map(s => `${s.label}: ${s.value}`).join("\n");
+      else text = [
+        d.title, "",
+        d.bullets.filter(Boolean).map(b => "• " + b).join("\n"), "",
+        d.description
+      ].join("\n");
+      try { await navigator.clipboard.writeText(text); toast("Copied."); }
+      catch { toast("Couldn't reach the clipboard — select and copy by hand."); }
+    };
+  });
+
+  const trim = async (field, el, limit, sync) => {
+    const btn = field === "title" ? $("btn-trim-title") : $("btn-trim-desc");
+    const was = btn.textContent;
+    btn.textContent = "Shortening…"; btn.disabled = true;
+    try {
+      const out = await shorten(field, el.value, limit);
+      if (out){ el.value = out; sync(); persistItems(); toast("Shortened."); }
+    } catch (e){ toast(e.message); }
+    btn.textContent = was; btn.disabled = false;
+  };
+  $("btn-trim-title").onclick = () => trim("title", title, settings.titleMax, syncTitle);
+  $("btn-trim-desc").onclick  = () => trim("description", desc, settings.descMax, syncDesc);
+}
+
+/* ============================================================
+   CSV
+   ============================================================ */
+
+function csvCell(v){
+  const s = String(v ?? "").replace(/\r?\n/g, " ");
+  return /[",]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+
+function exportCsv(){
+  const done = state.items.filter(i => i.data);
+  if (!done.length){ toast("Nothing to export yet."); return; }
+
+  const head = ["part_number","brand","model","product_type","condition","confidence",
+    "title","title_chars","bullet_1","bullet_2","bullet_3","bullet_4","bullet_5",
+    "description","description_chars","specs","compatibility","alternate_part_numbers",
+    "warnings","sources"];
+
+  const rows = done.map(i => {
+    const d = i.data;
+    return [
+      d.part_number, d.brand, d.model, d.product_type,
+      i.opts?.condition || "", d.confidence,
+      d.title, d.title.length,
+      ...[0,1,2,3,4].map(n => d.bullets[n] || ""),
+      d.description, d.description.length,
+      d.specs.map(s => `${s.label}: ${s.value}`).join(" | "),
+      d.compatibility.join(" | "),
+      d.alternate_part_numbers.join(" | "),
+      d.warnings.join(" | "),
+      d.sources.map(s => s.url).join(" | ")
+    ].map(csvCell).join(",");
+  });
+
+  const blob = new Blob(["\uFEFF" + [head.join(","), ...rows].join("\r\n")], { type:"text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `listings-${localDay()}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast(`Exported ${done.length} listing${done.length === 1 ? "" : "s"}.`);
+}
+
+/* ============================================================
+   Settings
+   ============================================================ */
+
+function openSettings(){
+  $("s-key").value = settings.apiKey;
+  $("s-model").value = settings.model;
+  $("s-gap").value = settings.gapSeconds;
+  $("s-retries").value = settings.retries;
+  $("s-rules").value = settings.rules;
+  $("s-title-max").value = settings.titleMax;
+  $("s-desc-max").value = settings.descMax;
+  $("s-pn-title").checked = settings.pnInTitle;
+  $("s-target").value = settings.target;
+  $("settings").showModal();
+}
+
+$("settings").addEventListener("close", () => {
+  if ($("settings").returnValue !== "save") return;
+  settings.apiKey = $("s-key").value.trim();
+  settings.model = $("s-model").value;
+  settings.gapSeconds = Math.min(60, Math.max(0, +$("s-gap").value || 0));
+  settings.retries = Math.min(8, Math.max(0, +$("s-retries").value || 0));
+  settings.rules = $("s-rules").value;
+  settings.titleMax = Math.max(60, +$("s-title-max").value || 200);
+  settings.descMax = Math.max(200, +$("s-desc-max").value || 2000);
+  settings.pnInTitle = $("s-pn-title").checked;
+  settings.target = Math.max(1, +$("s-target").value || 40);
+  saveSettings(); drawGauges(); draw();
+  toast("Saved.");
+});
+
+$("btn-settings").onclick = openSettings;
+$("s-cancel").onclick = () => $("settings").close("cancel");
+
+$("btn-reset-tally").onclick = () => {
+  tally = { date: localDay(), n: 0 };
+  store.set("pd.tally", JSON.stringify(tally));
+  drawGauges();
+  toast("Count reset.");
+};
+
+$("btn-wipe").onclick = () => {
+  if (!confirm("Clear the API key, settings, counts and the queue from this browser?")) return;
+  ["pd.settings","pd.tally","pd.quota","pd.items"].forEach(k => store.del(k));
+  location.reload();
+};
+
+/* ============================================================
+   Wiring
+   ============================================================ */
+
+$("run").onclick = runQueue;
+$("btn-csv").onclick = exportCsv;
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); runQueue(); }
+});
+
+window.addEventListener("beforeunload", (e) => {
+  if (state.running){ e.preventDefault(); e.returnValue = ""; }
+});
+
+drawGauges();
+drawQueue();
+draw();
+if (!settings.apiKey) setTimeout(openSettings, 400);
+</script>
+</body>
+</html>
