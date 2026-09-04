@@ -496,7 +496,35 @@ function readableError(status, payload){
 
 /* Groq (like other OpenAI-style APIs) sends a Retry-After header on 429s
    rather than a field in the JSON body — read the header first. */
-function retryDelayMs(res){
+/* Groq's rate-limit messages carry the real recommended wait inside the
+   message text itself — e.g. "Please try again in 9m38.016s" — not
+   reliably in a Retry-After header. Parsing the header alone meant this
+   app was guessing blindly every time, which is why retries could keep
+   escalating (4s, 8s, 16s...) without ever converging on what Groq
+   actually wanted. This reads the real number wherever it's stated. */
+function parseRetrySeconds(msg){
+  if (!msg) return 0;
+  const m = msg.match(/try again in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?/i);
+  if (!m) return 0;
+  const [, h, min, s] = m;
+  const total = (parseInt(h) || 0) * 3600 + (parseInt(min) || 0) * 60 + (parseFloat(s) || 0);
+  return total > 0 ? total : 0;
+}
+
+/* Groq enforces requests/tokens per minute AND per day on the same
+   endpoint, and phrases both as "Rate limit reached ... on X per
+   minute/day". A per-minute limit is worth waiting out. A per-day limit
+   (RPD/TPD) will not clear for hours and has no exact published reset
+   clock — retrying it with short backoff just repeats the same failure
+   until the retry budget runs out, which is exactly what "continuous
+   rate limiting" looks like from the outside. */
+function isDailyLimit(msg){
+  return /\bper day\b|\bRPD\b|\bTPD\b/i.test(msg || "");
+}
+
+function retryDelayMs(res, payload){
+  const fromMessage = parseRetrySeconds(payload?.error?.message);
+  if (fromMessage) return Math.ceil(fromMessage * 1000);
   const h = res?.headers?.get?.("retry-after");
   if (h){
     const n = parseFloat(h);
@@ -529,16 +557,28 @@ async function callGroq(model, body, { signal, onNote } = {}){
 
     // 404 here means the model name itself is unavailable — retiring,
     // renamed, or a lineup change — not something a retry will fix.
-    const retryable = res.status === 429 || res.status === 503 || res.status === 500;
-    lastErr = new Error(readableError(res.status, payload));
+    // A 429 against a DAILY limit is the same kind of dead end: no wait
+    // this app could reasonably ask you to sit through will fix it, so
+    // it's treated as non-retryable too, rather than escalating forever.
+    const daily = res.status === 429 && isDailyLimit(payload?.error?.message);
+    const retryable = (res.status === 429 && !daily) || res.status === 503 || res.status === 500;
+    lastErr = new Error(daily ? readableDailyLimitError(model, payload) : readableError(res.status, payload));
     lastErr._status = res.status;
+    lastErr._daily = daily;
     if (!retryable || attempt === attempts - 1) throw lastErr;
 
-    const wait = retryDelayMs(res) || Math.min(60000, 4000 * Math.pow(2, attempt));
+    const wait = retryDelayMs(res, payload) || Math.min(60000, 4000 * Math.pow(2, attempt));
     onNote?.(`Rate limited. Waiting ${Math.round(wait/1000)}s, then carrying on.`);
     await sleep(wait, signal);
   }
   throw lastErr;
+}
+
+function readableDailyLimitError(model, payload){
+  const msg = payload?.error?.message || "";
+  const wait = parseRetrySeconds(msg);
+  const resetsIn = wait ? ` It should reset in roughly ${Math.round(wait/3600)} hour${Math.round(wait/3600) === 1 ? "" : "s"}.` : "";
+  return `${model} has hit its free-tier daily limit, not a short-term rate limit — waiting a few seconds won't clear this.${resetsIn} This is separate from the in-app usage counter, which only estimates the search-specific allowance. Try again later, or switch to a different Groq account's key for the rest of today.`;
 }
 
 /* Free-tier model lineups shift over time on every provider, not just
@@ -569,16 +609,20 @@ async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, rememb
       // instance), and a single well-filled request can exceed a tight
       // one outright. The sibling model may simply have more headroom, so
       // it's worth trying before giving up on either code.
-      if (e._status === 404 || e._status === 413){ lastErr = e; continue; }
+      if (e._status === 404 || e._status === 413 || e._daily){ lastErr = e; continue; }
       throw e;
     }
   }
 
   const status413 = lastErr?._status === 413;
-  throw new Error(status413
-    ? `Even the shorter model couldn't fit this one under its free-tier token limit (${tried.join(", ")} both hit it). This is usually a one-off on an unusually well-documented part — try running it again on its own.`
-    : `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
-      `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
+  const daily = lastErr?._daily;
+  throw new Error(
+    daily
+      ? `Both ${tried.join(" and ")} have hit their free-tier daily limit. This won't clear with more waiting today — try again tomorrow, or switch to a different Groq account's key for the rest of today.`
+      : status413
+        ? `Even the shorter model couldn't fit this one under its free-tier token limit (${tried.join(", ")} both hit it). This is usually a one-off on an unusually well-documented part — try running it again on its own.`
+        : `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
+          `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
   );
 }
 
