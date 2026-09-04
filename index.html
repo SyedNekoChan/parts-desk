@@ -502,6 +502,8 @@ function readableError(status, payload){
     return "That model name wasn't found. Pick another one in Settings.";
   if (status === 413)
     return `Groq rejected this request as too large${msg ? ` — Groq's exact wording: "${msg}"` : ", with no further detail in the response"}. The app tries an alternate model automatically before giving up.`;
+  if (status === 400 && payload?.error?.code === "json_validate_failed")
+    return "The model produced a malformed response — a known, reported reliability quirk in these models rather than a problem with the request. The app retries automatically; this message means it kept happening even after retrying.";
   return `API error ${status}. ${msg}`;
 }
 
@@ -583,16 +585,29 @@ async function callGroq(model, body, { signal, onNote } = {}){
     // this app could reasonably ask you to sit through will fix it, so
     // it's treated as non-retryable too, rather than escalating forever.
     const daily = res.status === 429 && isDailyLimit(payload?.error?.message);
-    const retryable = (res.status === 429 && !daily) || res.status === 503 || res.status === 500;
+    // GPT-OSS models have a known, reported quirk where they occasionally
+    // produce a malformed generation that fails Groq's own internal JSON
+    // validation — code "json_validate_failed", generally with an empty
+    // failed_generation field. This looks stochastic (a bad sample on
+    // that one attempt) rather than anything about the specific prompt,
+    // so it's usually worth just trying again.
+    const jsonGlitch = res.status === 400 && payload?.error?.code === "json_validate_failed";
+    const retryable = (res.status === 429 && !daily) || res.status === 503 || res.status === 500 || jsonGlitch;
     lastErr = new Error(daily ? readableDailyLimitError(model, payload) : readableError(res.status, payload));
     lastErr._status = res.status;
     lastErr._daily = daily;
+    lastErr._jsonGlitch = jsonGlitch;
     lastErr._model = model;
     lastErr._raw = payload; // the actual, unedited response — shown verbatim in the UI so a misdiagnosis on our end is visible and fixable
     if (!retryable || attempt === attempts - 1) throw lastErr;
 
-    const wait = retryDelayMs(res, payload) || Math.min(60000, 4000 * Math.pow(2, attempt));
-    onNote?.(`Rate limited. Waiting ${Math.round(wait/1000)}s, then carrying on.`);
+    // A rate limit needs the real recommended wait. A stochastic
+    // generation glitch doesn't — it isn't a clock being enforced, so a
+    // short pause before trying again is enough, not an escalating one.
+    const wait = jsonGlitch ? 1500 : (retryDelayMs(res, payload) || Math.min(60000, 4000 * Math.pow(2, attempt)));
+    onNote?.(jsonGlitch
+      ? "That attempt produced a malformed response. Trying again."
+      : `Rate limited. Waiting ${Math.round(wait/1000)}s, then carrying on.`);
     await sleep(wait, signal);
   }
   throw lastErr;
@@ -630,7 +645,7 @@ async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, rememb
       // 404 means the model itself is gone. 413 and a daily 429 both mean
       // this specific model won't take the request right now for reasons
       // that might not apply to its sibling — worth trying before giving up.
-      if (e._status === 404 || e._status === 413 || e._daily){ lastErr = e; continue; }
+      if (e._status === 404 || e._status === 413 || e._daily || e._jsonGlitch){ lastErr = e; continue; }
       throw e;
     }
   }
@@ -639,10 +654,12 @@ async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, rememb
   const finalErr = new Error(
     daily
       ? `Both ${tried.join(" and ")} have hit their free-tier daily limit. This won't clear with more waiting today — try again tomorrow, or switch to a different Groq account's key for the rest of today.`
-      : lastErr?._status === 413
-        ? `Both ${tried.join(" and ")} rejected this request as too large (413). See the raw response below — that's Groq's exact wording, not our guess at what it means, since a request this small shouldn't normally hit a real size limit.`
-        : `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
-          `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
+      : lastErr?._jsonGlitch
+        ? `Both ${tried.join(" and ")} kept producing a malformed response for this part number, even after retrying each. This is a known reliability quirk in these models, not anything wrong with the part number — running it again on its own often works.`
+        : lastErr?._status === 413
+          ? `Both ${tried.join(" and ")} rejected this request as too large (413). See the raw response below — that's Groq's exact wording, not our guess at what it means, since a request this small shouldn't normally hit a real size limit.`
+          : `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
+            `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
   );
   finalErr._status = lastErr?._status;
   finalErr._raw = lastErr?._raw;
