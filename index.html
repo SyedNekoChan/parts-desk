@@ -448,7 +448,7 @@ try {
 
 function persistItems(){
   try {
-    const slim = state.items.map(({id,part,status,data,error,opts}) => ({id,part,status,data,error,opts}));
+    const slim = state.items.map(({id,part,status,data,error,errorRaw,errorModel,opts}) => ({id,part,status,data,error,errorRaw,errorModel,opts}));
     store.set("pd.items", JSON.stringify(slim).slice(0, 4000000));
   } catch {}
 }
@@ -490,7 +490,7 @@ function readableError(status, payload){
   if (status === 404)
     return "That model name wasn't found. Pick another one in Settings.";
   if (status === 413)
-    return `That request was too large for this model to accept${msg ? ` (Groq said: "${msg}")` : ""}. Groq's free-tier per-model token limits vary a lot — this is usually a specific model's ceiling on a single request rather than anything about what you typed, and the app tries an alternate model automatically before giving up.`;
+    return `Groq rejected this request as too large${msg ? ` — Groq's exact wording: "${msg}"` : ", with no further detail in the response"}. The app tries an alternate model automatically before giving up.`;
   return `API error ${status}. ${msg}`;
 }
 
@@ -565,6 +565,8 @@ async function callGroq(model, body, { signal, onNote } = {}){
     lastErr = new Error(daily ? readableDailyLimitError(model, payload) : readableError(res.status, payload));
     lastErr._status = res.status;
     lastErr._daily = daily;
+    lastErr._model = model;
+    lastErr._raw = payload; // the actual, unedited response — shown verbatim in the UI so a misdiagnosis on our end is visible and fixable
     if (!retryable || attempt === attempts - 1) throw lastErr;
 
     const wait = retryDelayMs(res, payload) || Math.min(60000, 4000 * Math.pow(2, attempt));
@@ -603,27 +605,27 @@ async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, rememb
     } catch (e){
       if (e.name === "AbortError") throw e;
       tried.push(model);
-      // 404 means the model itself is gone. 413 often isn't really about
-      // byte size — Groq's free-tier per-model tokens-per-minute ceiling
-      // varies a lot (8,000 on gpt-oss-20b vs 12,000 on llama-3.3-70b, for
-      // instance), and a single well-filled request can exceed a tight
-      // one outright. The sibling model may simply have more headroom, so
-      // it's worth trying before giving up on either code.
+      // 404 means the model itself is gone. 413 and a daily 429 both mean
+      // this specific model won't take the request right now for reasons
+      // that might not apply to its sibling — worth trying before giving up.
       if (e._status === 404 || e._status === 413 || e._daily){ lastErr = e; continue; }
       throw e;
     }
   }
 
-  const status413 = lastErr?._status === 413;
   const daily = lastErr?._daily;
-  throw new Error(
+  const finalErr = new Error(
     daily
       ? `Both ${tried.join(" and ")} have hit their free-tier daily limit. This won't clear with more waiting today — try again tomorrow, or switch to a different Groq account's key for the rest of today.`
-      : status413
-        ? `Even the shorter model couldn't fit this one under its free-tier token limit (${tried.join(", ")} both hit it). This is usually a one-off on an unusually well-documented part — try running it again on its own.`
+      : lastErr?._status === 413
+        ? `Both ${tried.join(" and ")} rejected this request as too large (413). See the raw response below — that's Groq's exact wording, not our guess at what it means, since a request this small shouldn't normally hit a real size limit.`
         : `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
           `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
   );
+  finalErr._status = lastErr?._status;
+  finalErr._raw = lastErr?._raw;
+  finalErr._model = lastErr?._model;
+  throw finalErr;
 }
 
 /* Diagnostic: asks Groq directly which models this key can call. */
@@ -692,25 +694,18 @@ const ACCURACY_RULES = `Accuracy matters more than completeness. This copy gets 
 
 function researchPrompt(part, opts){
   const lines = [];
-  lines.push(`You research computer hardware part numbers for a business that resells IT equipment: systems and components from Dell, HP, Lenovo, Jabra, Poly, NVIDIA, AMD, Seagate and similar makers, plus panels, bezels, cables, adapters, docks and spare parts.`);
+  lines.push(`You research computer hardware part numbers for an IT hardware reseller (Dell, HP, Lenovo, Jabra, Poly, NVIDIA, AMD, Seagate and similar makers; also panels, bezels, cables, docks, spares).`);
   lines.push("");
-  lines.push(`Use your web search tool to find this part number and work out exactly what it is. Do not answer from memory alone — a part number is not something to guess at, and you have a search tool for exactly this reason.`);
+  lines.push(`Use your web search tool to identify this part number — do not answer from memory alone.`);
   lines.push("");
   lines.push(`Part number: ${part}`);
-  if (opts.brand) lines.push(`Brand suggested by the operator (verify it, don't assume it): ${opts.brand}`);
+  if (opts.brand) lines.push(`Brand suggested by the operator (verify, don't assume): ${opts.brand}`);
   lines.push("");
   lines.push(ACCURACY_RULES);
   lines.push("");
-  lines.push(`Search from several angles rather than repeating one phrasing: the bare part number; the part number with the brand; the part number with words such as specifications, spec sheet, datasheet or replacement; and the part number with a likely product type. If early results are thin, try it with and without leading zeros, and check whether it is an assembly, service or option part number that maps to a different marketing name.`);
+  lines.push(`Try a few angles if needed: the bare part number; part number + brand; part number + "specifications" or "datasheet"; with and without leading zeros.`);
   lines.push("");
-  lines.push(`Then write a plain-text research brief covering:`);
-  lines.push(`- Brand, model or series, and what the part physically is.`);
-  lines.push(`- Every specification you could confirm, with the kind of source each came from.`);
-  lines.push(`- Systems or models a source explicitly lists it as fitting.`);
-  lines.push(`- Equivalent, superseding or superseded part numbers.`);
-  lines.push(`- How confident you are, and anything that didn't line up between sources.`);
-  lines.push("");
-  lines.push(`Write the brief for a colleague, not for a customer. No marketing language. If you could not identify the part, say that clearly and explain what you did find.`);
+  lines.push(`Write a short plain-text brief covering: brand/model/what it physically is; confirmed specs and their source type; systems it's explicitly listed as fitting; equivalent part numbers; your confidence and any disagreement between sources. For a colleague, not a customer — no marketing language. If you couldn't identify it, say so plainly.`);
   return lines.join("\n");
 }
 
@@ -773,7 +768,7 @@ async function research(part, opts, onNote, signal){
   const { payload, model: usedSearchModel } = await callGroqAuto(settings.model, SEARCH_MODELS, {
     messages:[{ role:"user", content: researchPrompt(part, opts) }],
     temperature:0.2,
-    max_tokens:3000,
+    max_tokens:1500,
     // web_search returns short snippets; visit_website pulls a full page and
     // the compound systems can chain up to 10 tool calls per request, which
     // can balloon what Groq holds internally for a well-documented part
@@ -984,6 +979,8 @@ async function runQueue(){
       if (err.name === "AbortError"){ item.status = "queued"; break; }
       item.status = "error";
       item.error = err.message || String(err);
+      item.errorRaw = err._raw ? JSON.stringify(err._raw, null, 2) : null;
+      item.errorModel = err._model || null;
     }
 
     drawQueue(); persistItems();
@@ -1083,6 +1080,12 @@ function wireRetry(item){
     $("condition").value = item.opts?.condition ?? "New";
     runQueue();
   };
+
+  const copyRaw = $("btn-copy-raw");
+  if (copyRaw) copyRaw.onclick = async () => {
+    try { await navigator.clipboard.writeText(item.errorRaw); toast("Copied."); }
+    catch { toast("Couldn't reach the clipboard — select and copy by hand."); }
+  };
 }
 
 function emptyView(){
@@ -1111,10 +1114,22 @@ function workingView(item){
 }
 
 function errorView(item){
+  const raw = item.errorRaw ? `
+    <details class="panel" style="margin-top:14px">
+      <summary style="cursor:pointer;padding:9px 13px;font-size:13px;font-weight:600">
+        Raw response from Groq${item.errorModel ? ` (model: ${esc(item.errorModel)})` : ""}
+      </summary>
+      <div class="panel-body">
+        <p class="hint" style="margin:0 0 8px">This is exactly what Groq sent back, unedited — worth sharing verbatim if you're reporting a problem.</p>
+        <pre id="raw-error-text" style="white-space:pre-wrap;font:500 12px/1.5 var(--mono);margin:0">${esc(item.errorRaw)}</pre>
+        <button class="btn tiny" id="btn-copy-raw" style="margin-top:8px">Copy raw response</button>
+      </div>
+    </details>` : "";
   return `<div class="result">
     <div class="result-head"><h1>${esc(item.part)}</h1></div>
     <div class="note bad"><b>Didn't finish.</b><br>${esc(item.error)}</div>
-    <div class="actions"><button class="btn" id="btn-retry">Try this one again</button></div>
+    ${raw}
+    <div class="actions" style="margin-top:14px"><button class="btn" id="btn-retry">Try this one again</button></div>
   </div>`;
 }
 
