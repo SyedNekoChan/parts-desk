@@ -191,8 +191,8 @@
       <span><b id="tally-n">0</b> / <span id="tally-target">40</span> listings</span>
       <div class="track"><div class="fill" id="tally-fill"></div></div>
     </div>
-    <div class="gauge" title="Search calls used today on the GPT-OSS search model. Groq's free tier allows 1,000/day per model; this app tracks it locally so the count may drift slightly from Groq's own dashboard.">
-      <span><b id="quota-n">0</b> / 1,000 free searches</span>
+    <div class="gauge" title="Real tokens used today by your current search model, from Groq's own response data — not an estimate. Groq's free tier allows about 200,000/day per model; this is the limit that actually governs, tracked per model.">
+      <span><b id="quota-n">0</b> / 200,000 tokens today</span>
       <div class="track"><div class="fill" id="quota-fill"></div></div>
     </div>
   </div>
@@ -265,7 +265,7 @@
             <option value="openai/gpt-oss-120b">GPT-OSS 120B — thorough research (default)</option>
             <option value="openai/gpt-oss-20b">GPT-OSS 20B — faster, lighter</option>
           </select>
-          <div class="hint">Both use Groq's built-in browser search tool. Each has its own separate 1,000-searches-a-day free allowance — picking one doesn't share a pool with the other, or with the writing model below.</div>
+          <div class="hint">Both use Groq's built-in browser search tool. Each has its own separate ~200,000-tokens-a-day free allowance — that's the limit that actually governs, not a simple request count, and it doesn't share a pool with the other or with the writing model below.</div>
         </div>
         <div class="field">
           <label for="s-format-model">Writing model</label>
@@ -362,7 +362,6 @@
    ============================================================ */
 
 const $ = (id) => document.getElementById(id);
-const GROUNDED_PER_DAY = 1000; // openai/gpt-oss-120b's free-tier daily cap, its own separate pool from the writing model
 
 /* ---------- storage (degrades to memory if blocked) ---------- */
 const mem = {};
@@ -418,10 +417,18 @@ try {
   if (t && t.date === localDay()) tally = t;
 } catch {}
 
-let quota = { date: localDay(), n: 0 };
+// Tracked per model, in real tokens, from Groq's own `usage.total_tokens`
+// on each response — not a request count. The daily limit Groq actually
+// enforces for the GPT-OSS models is tokens-per-day (200,000), not a
+// request count, and a single listing's real cost varies with how much
+// the research brief and the reply end up being. Counting requests gave
+// a gauge that could show comfortable headroom right up until Groq's own
+// server stopped things cold — this tracks the number that's actually real.
+const TPD_ESTIMATE = 200000; // Groq's published free-tier figure for the GPT-OSS models specifically
+let quota = { date: localDay(), tokensByModel: {} };
 try {
   const q = JSON.parse(store.get("pd.quota") || "null");
-  if (q && q.date === localDay()) quota = q;
+  if (q && q.date === localDay()) quota = { date: q.date, tokensByModel: q.tokensByModel || {} };
 } catch {}
 
 function drawGauges(){
@@ -429,8 +436,9 @@ function drawGauges(){
   $("tally-target").textContent = settings.target;
   $("tally-fill").style.width = Math.min(100, (tally.n / Math.max(1, settings.target)) * 100) + "%";
 
-  $("quota-n").textContent = quota.n;
-  const pct = Math.min(100, (quota.n / GROUNDED_PER_DAY) * 100);
+  const used = quota.tokensByModel[settings.model] || 0;
+  $("quota-n").textContent = used.toLocaleString();
+  const pct = Math.min(100, (used / TPD_ESTIMATE) * 100);
   const fill = $("quota-fill");
   fill.style.width = pct + "%";
   fill.className = "fill" + (pct >= 95 ? " bad" : pct >= 80 ? " warn" : "");
@@ -439,9 +447,13 @@ function bumpTally(){
   if (tally.date !== localDay()) tally = { date: localDay(), n: 0 };
   tally.n++; store.set("pd.tally", JSON.stringify(tally)); drawGauges();
 }
-function bumpQuota(){
-  if (quota.date !== localDay()) quota = { date: localDay(), n: 0 };
-  quota.n++; store.set("pd.quota", JSON.stringify(quota)); drawGauges();
+// Call with the model that actually served the response and the real
+// token cost Groq reported for it — not an assumed count of 1.
+function bumpQuota(model, tokensUsed){
+  if (quota.date !== localDay()) quota = { date: localDay(), tokensByModel: {} };
+  if (model && tokensUsed) quota.tokensByModel[model] = (quota.tokensByModel[model] || 0) + tokensUsed;
+  store.set("pd.quota", JSON.stringify(quota));
+  drawGauges();
 }
 
 /* ---------- app state ---------- */
@@ -581,10 +593,16 @@ async function callGroq(model, body, { signal, onNote } = {}){
 
     // 404 here means the model name itself is unavailable — retiring,
     // renamed, or a lineup change — not something a retry will fix.
-    // A 429 against a DAILY limit is the same kind of dead end: no wait
-    // this app could reasonably ask you to sit through will fix it, so
-    // it's treated as non-retryable too, rather than escalating forever.
-    const daily = res.status === 429 && isDailyLimit(payload?.error?.message);
+    const isDaily429 = res.status === 429 && isDailyLimit(payload?.error?.message);
+    // Daily limits (RPD/TPD) turn out to behave as a rolling window that
+    // frees up gradually, not a hard reset at midnight — Groq's own
+    // message gives the real wait ("try again in 5m7s"), and that can be
+    // short. Only treat it as a dead end if the wait is long enough that
+    // sitting through it in a browser tab isn't reasonable, or if no
+    // wait time was given at all and we'd otherwise be guessing blind.
+    const DAILY_WAIT_CEILING_SEC = 900; // 15 minutes
+    const dailyWaitSec = isDaily429 ? parseRetrySeconds(payload?.error?.message) : 0;
+    const daily = isDaily429 && !(dailyWaitSec > 0 && dailyWaitSec <= DAILY_WAIT_CEILING_SEC);
     // GPT-OSS models have a known, reported quirk where they occasionally
     // produce a malformed generation that fails Groq's own internal JSON
     // validation — code "json_validate_failed", generally with an empty
@@ -592,7 +610,8 @@ async function callGroq(model, body, { signal, onNote } = {}){
     // that one attempt) rather than anything about the specific prompt,
     // so it's usually worth just trying again.
     const jsonGlitch = res.status === 400 && payload?.error?.code === "json_validate_failed";
-    const retryable = (res.status === 429 && !daily) || res.status === 503 || res.status === 500 || jsonGlitch;
+    const shortDailyWait = isDaily429 && !daily;
+    const retryable = (res.status === 429 && !isDaily429) || shortDailyWait || res.status === 503 || res.status === 500 || jsonGlitch;
     lastErr = new Error(daily ? readableDailyLimitError(model, payload) : readableError(res.status, payload));
     lastErr._status = res.status;
     lastErr._daily = daily;
@@ -607,7 +626,9 @@ async function callGroq(model, body, { signal, onNote } = {}){
     const wait = jsonGlitch ? 1500 : (retryDelayMs(res, payload) || Math.min(60000, 4000 * Math.pow(2, attempt)));
     onNote?.(jsonGlitch
       ? "That attempt produced a malformed response. Trying again."
-      : `Rate limited. Waiting ${Math.round(wait/1000)}s, then carrying on.`);
+      : shortDailyWait
+        ? `Today's token allowance needs a few minutes to free back up. Waiting ${Math.round(wait/1000)}s — this is normal, not stuck.`
+        : `Rate limited. Waiting ${Math.round(wait/1000)}s, then carrying on.`);
     await sleep(wait, signal);
   }
   throw lastErr;
@@ -615,9 +636,15 @@ async function callGroq(model, body, { signal, onNote } = {}){
 
 function readableDailyLimitError(model, payload){
   const msg = payload?.error?.message || "";
-  const wait = parseRetrySeconds(msg);
-  const resetsIn = wait ? ` It should reset in roughly ${Math.round(wait/3600)} hour${Math.round(wait/3600) === 1 ? "" : "s"}.` : "";
-  return `${model} has hit its free-tier daily limit, not a short-term rate limit — waiting a few seconds won't clear this.${resetsIn} This is separate from the in-app usage counter, which only estimates the search-specific allowance. Try again later, or switch to a different Groq account's key for the rest of today.`;
+  const waitSec = parseRetrySeconds(msg);
+  let resetsIn = "";
+  if (waitSec > 0){
+    const mins = Math.round(waitSec / 60);
+    resetsIn = mins < 60
+      ? ` It should reset in roughly ${mins} minute${mins === 1 ? "" : "s"}.`
+      : ` It should reset in roughly ${Math.round(waitSec / 3600)} hour${Math.round(waitSec / 3600) === 1 ? "" : "s"}.`;
+  }
+  return `${model} has hit its free-tier daily limit, and the wait to clear it is too long to sit through here.${resetsIn} This is separate from the in-app usage counter. Try again later, or switch to a different Groq account's key for the rest of today.`;
 }
 
 /* Free-tier model lineups shift over time on every provider, not just
@@ -830,7 +857,7 @@ async function research(part, opts, onNote, signal){
   }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingSearchModel });
 
   lastWorkingSearchModel = usedSearchModel;
-  bumpQuota();
+  bumpQuota(usedSearchModel, payload?.usage?.total_tokens);
 
   let brief = textOf(payload).trim();
   const grounding = groundingOf(payload);
@@ -868,6 +895,7 @@ async function research(part, opts, onNote, signal){
   }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingFormatModel });
 
   lastWorkingFormatModel = usedFormatModel;
+  bumpQuota(usedFormatModel, formatted?.usage?.total_tokens);
 
   const raw = textOf(formatted).trim();
   const data = extractJson(raw);
@@ -992,9 +1020,14 @@ async function runQueue(){
     toast(`Skipped ${dropped} line${dropped === 1 ? "" : "s"} over ${MAX_PART_LENGTH} characters — too long to be a real part number.`);
   }
 
-  if (quota.n + parts.length > GROUNDED_PER_DAY){
-    const left = Math.max(0, GROUNDED_PER_DAY - quota.n);
-    if (!confirm(`You've used roughly ${quota.n} of today's ~1,000 free searches and queued ${parts.length} more. The ones past the limit will fail until Groq's daily allowance resets — this app can't say exactly when, since Groq doesn't publish a fixed clock the way Google does. Nothing will be charged either way. Run anyway?`)) return;
+  // A rough planning estimate only — real usage is tracked from each
+  // response's actual token count after the fact. This is just to warn
+  // before queuing a batch that's likely to run into today's real limit.
+  const ESTIMATED_TOKENS_PER_LISTING = 2000;
+  const usedSoFar = quota.tokensByModel[settings.model] || 0;
+  const projected = usedSoFar + parts.length * ESTIMATED_TOKENS_PER_LISTING;
+  if (projected > TPD_ESTIMATE){
+    if (!confirm(`${settings.model} has used roughly ${usedSoFar.toLocaleString()} of its ~${TPD_ESTIMATE.toLocaleString()} free tokens today, and this batch will likely need more than what's left. Groq's daily token limit behaves as a rolling window rather than a fixed reset, so this may clear itself within minutes rather than requiring a wait until tomorrow — but some part numbers in this batch may still fail today. Nothing will be charged either way. Run anyway?`)) return;
   }
 
   const opts = { brand: $("brand").value, condition: $("condition").value };
@@ -1459,7 +1492,7 @@ $("btn-check-models").onclick = async () => {
       const format = models.filter(m => FORMAT_MODELS.includes(m));
       const other = models.filter(m => !SEARCH_MODELS.includes(m) && !FORMAT_MODELS.includes(m));
       const lines = [];
-      lines.push("Search models (used for research, each with its own 1,000/day allowance):");
+      lines.push("Search models (used for research, each with its own ~200,000-tokens/day allowance):");
       if (search.length) search.forEach(m => lines.push("  ✓ " + m));
       else lines.push("  Neither openai/gpt-oss-120b nor openai/gpt-oss-20b is showing up for this key right now.");
       lines.push("");
