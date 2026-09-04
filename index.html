@@ -542,7 +542,18 @@ async function callGroq(model, body, { signal, onNote } = {}){
     try {
       res = await fetch(API_URL, {
         method:"POST",
-        headers:{ "content-type":"application/json", "authorization": "Bearer " + settings.apiKey },
+        headers:{
+          "content-type":"application/json",
+          "authorization": "Bearer " + settings.apiKey,
+          // Every one of Groq's own documentation examples for
+          // compound_custom / built-in tools pairs it with this header.
+          // We were sending compound_custom without it — plausibly why
+          // every request was rejected outright, uniformly, regardless
+          // of content, with a generic "request_too_large" that carries
+          // none of the usual limit/used/requested numbers a genuine
+          // size or rate problem would include.
+          "Groq-Model-Version": "latest"
+        },
         body: JSON.stringify({ model, ...body }),
         signal
       });
