@@ -191,8 +191,8 @@
       <span><b id="tally-n">0</b> / <span id="tally-target">40</span> listings</span>
       <div class="track"><div class="fill" id="tally-fill"></div></div>
     </div>
-    <div class="gauge" title="Compound (search) calls used today. Groq's free tier allows 250/day org-wide; this app tracks it locally so the count may drift slightly from Groq's own dashboard.">
-      <span><b id="quota-n">0</b> / 250 free searches</span>
+    <div class="gauge" title="Search calls used today on the GPT-OSS search model. Groq's free tier allows 1,000/day per model; this app tracks it locally so the count may drift slightly from Groq's own dashboard.">
+      <span><b id="quota-n">0</b> / 1,000 free searches</span>
       <div class="track"><div class="fill" id="quota-fill"></div></div>
     </div>
   </div>
@@ -262,10 +262,10 @@
         <div class="field" style="margin-top:14px">
           <label for="s-model">Search model</label>
           <select id="s-model">
-            <option value="groq/compound">Compound — thorough, can search from a few angles (default)</option>
-            <option value="groq/compound-mini">Compound Mini — faster, one search per part number</option>
+            <option value="openai/gpt-oss-120b">GPT-OSS 120B — thorough research (default)</option>
+            <option value="openai/gpt-oss-20b">GPT-OSS 20B — faster, lighter</option>
           </select>
-          <div class="hint">These are the two Groq models with a built-in web-search tool. Both draw from the same 250-searches-a-day free allowance, shared across your whole account regardless of which one you pick.</div>
+          <div class="hint">Both use Groq's built-in browser search tool. Each has its own separate 1,000-searches-a-day free allowance — picking one doesn't share a pool with the other, or with the writing model below.</div>
         </div>
         <div class="field">
           <label for="s-format-model">Writing model</label>
@@ -273,7 +273,7 @@
             <option value="openai/gpt-oss-20b">GPT-OSS 20B — good at following the format rules (default)</option>
             <option value="llama-3.3-70b-versatile">Llama 3.3 70B — larger, sometimes better prose</option>
           </select>
-          <div class="hint">Turns the research into the title, bullets and description. Doesn't search, so it draws from Groq's much larger everyday allowance (14,400 calls/day) instead of the 250 above — this step won't be what runs you short.</div>
+          <div class="hint">Turns the research into the title, bullets and description. Doesn't search — this has its own separate daily allowance from the search step above, so it won't be what runs you short.</div>
         </div>
         <div class="field">
           <button type="button" class="btn tiny" id="btn-check-models">Check available models</button>
@@ -295,7 +295,7 @@
           </div>
         </div>
         <div class="hint" style="margin-top:-6px">The free tier allows only a few requests a minute. A gap of 4–6 seconds keeps a long batch from tripping the limit. When it trips anyway, the app waits as long as Groq asks and picks up where it left off.</div>
-        <div class="hint" style="margin-top:6px">Note: this counts against a smaller, separate per-minute limit than the plain-text calls, since compound systems (search) are capped at 30 requests/minute independent of the 30/min the writing model gets.</div>
+        <div class="hint" style="margin-top:6px">The search and writing steps use different models, each with its own separate 30-requests-a-minute limit — one running long won't eat into the other's budget.</div>
       </fieldset>
 
       <fieldset>
@@ -362,7 +362,7 @@
    ============================================================ */
 
 const $ = (id) => document.getElementById(id);
-const GROUNDED_PER_DAY = 250; // Groq's published free-tier cap for groq/compound + compound-mini combined
+const GROUNDED_PER_DAY = 1000; // openai/gpt-oss-120b's free-tier daily cap, its own separate pool from the writing model
 
 /* ---------- storage (degrades to memory if blocked) ---------- */
 const mem = {};
@@ -373,7 +373,7 @@ const store = {
 };
 
 const DEFAULTS = {
-  apiKey:"", model:"groq/compound", formatModel:"openai/gpt-oss-20b",
+  apiKey:"", model:"openai/gpt-oss-120b", formatModel:"openai/gpt-oss-20b",
   gapSeconds:5, retries:4,
   rules:"", titleMax:200, descMax:2000, pnInTitle:true, target:40
 };
@@ -387,6 +387,17 @@ try { Object.assign(settings, JSON.parse(store.get("pd.settings") || "{}")); } c
 const RULES_MAX_CHARS = 3000;
 if (typeof settings.rules === "string" && settings.rules.length > RULES_MAX_CHARS){
   settings.rules = settings.rules.slice(0, RULES_MAX_CHARS);
+  store.set("pd.settings", JSON.stringify(settings));
+}
+
+// Earlier versions of this app used groq/compound and groq/compound-mini
+// for search. Those models have a live, publicly-reported bug that rejects
+// requests with a generic "413 Request Entity Too Large" regardless of
+// content — confirmed against Groq's own community forum, not something
+// fixable from here. Anyone who saved a setting from before this was
+// discovered would otherwise stay stuck on the broken model forever.
+if (settings.model === "groq/compound" || settings.model === "groq/compound-mini"){
+  settings.model = DEFAULTS.model;
   store.set("pd.settings", JSON.stringify(settings));
 }
 
@@ -545,13 +556,13 @@ async function callGroq(model, body, { signal, onNote } = {}){
         headers:{
           "content-type":"application/json",
           "authorization": "Bearer " + settings.apiKey,
-          // Every one of Groq's own documentation examples for
-          // compound_custom / built-in tools pairs it with this header.
-          // We were sending compound_custom without it — plausibly why
-          // every request was rejected outright, uniformly, regardless
-          // of content, with a generic "request_too_large" that carries
-          // none of the usual limit/used/requested numbers a genuine
-          // size or rate problem would include.
+          // Pins to Groq's current model behaviour. Kept as a harmless
+          // default even though this app no longer uses compound_custom
+          // (the feature this header was originally added for) — search
+          // now runs through GPT-OSS's browser_search tool instead, after
+          // groq/compound proved to reject requests outright regardless
+          // of content (a live, publicly-reported issue, not something
+          // fixable by adjusting what we send it).
           "Groq-Model-Version": "latest"
         },
         body: JSON.stringify({ model, ...body }),
@@ -598,7 +609,7 @@ function readableDailyLimitError(model, payload){
    Google's. Try the operator's chosen model, then whichever one last
    worked in this tab, then fall back through the given alternates, and
    only fail once every option is exhausted. */
-const SEARCH_MODELS = ["groq/compound", "groq/compound-mini"];
+const SEARCH_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 const FORMAT_MODELS = ["openai/gpt-oss-20b", "llama-3.3-70b-versatile"];
 let lastWorkingSearchModel = null;
 let lastWorkingFormatModel = null;
@@ -672,12 +683,24 @@ function groundingOf(payload){
   const urls = new Set();
   const urlRe = /https?:\/\/[^\s")\]]+/g;
 
+  // Different built-in tools (compound's "search", GPT-OSS's
+  // "browser_search") may label this entry differently, and we're not
+  // fully certain of the exact string every variant uses. Rather than
+  // filter on one assumed type value and risk silently finding zero
+  // sources on a genuine success, process every entry Groq actually
+  // returned and pull out whatever's there.
   for (const t of tools){
-    if (t.type !== "search") continue;
     try {
       const args = JSON.parse(t.arguments || "{}");
       if (args.query) queries.push(args.query);
     } catch {}
+    // Some tool shapes (Groq's own web_search docs show this) carry a
+    // structured search_results field rather than a plain text blob.
+    if (Array.isArray(t.search_results?.results)){
+      for (const r of t.search_results.results){
+        if (r?.url) urls.add(r.url);
+      }
+    }
     const text = t.output || "";
     let m;
     while ((m = urlRe.exec(text))) urls.add(m[0].replace(/[.,;:]+$/, ""));
@@ -689,7 +712,7 @@ function groundingOf(payload){
     return { title: host, url: u };
   });
 
-  return { sources, queries, searchPerformed: tools.some(t => t.type === "search") };
+  return { sources, queries, searchPerformed: tools.length > 0 };
 }
 
 /* ============================================================
@@ -779,13 +802,14 @@ async function research(part, opts, onNote, signal){
   const { payload, model: usedSearchModel } = await callGroqAuto(settings.model, SEARCH_MODELS, {
     messages:[{ role:"user", content: researchPrompt(part, opts) }],
     temperature:0.2,
-    max_tokens:1500,
-    // web_search returns short snippets; visit_website pulls a full page and
-    // the compound systems can chain up to 10 tool calls per request, which
-    // can balloon what Groq holds internally for a well-documented part
-    // even though what we send stays tiny. Keeping this to search only is
-    // both cheaper and a direct guard against that.
-    compound_custom:{ tools:{ enabled_tools:["web_search"] } }
+    max_completion_tokens:1500,
+    // browser_search runs on the GPT-OSS models specifically — a separate
+    // mechanism from the groq/compound systems, which have a live,
+    // publicly-reported bug rejecting requests with a generic 413
+    // regardless of content. tool_choice:"required" matches the prompt's
+    // instruction not to answer from memory alone.
+    tools:[{ type:"browser_search" }],
+    tool_choice:"required"
   }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingSearchModel });
 
   lastWorkingSearchModel = usedSearchModel;
@@ -822,7 +846,7 @@ async function research(part, opts, onNote, signal){
   const { payload: formatted, model: usedFormatModel } = await callGroqAuto(settings.formatModel, FORMAT_MODELS, {
     messages:[{ role:"user", content: formatPrompt(part, opts, brief) }],
     temperature:0.3,
-    max_tokens:1400, // a title, five bullets, description and specs fit comfortably well under this
+    max_completion_tokens:1400, // a title, five bullets, description and specs fit comfortably well under this
     response_format:{ type:"json_object" }
   }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingFormatModel });
 
@@ -891,7 +915,7 @@ Return only the rewritten ${field}, with no preamble and no quotation marks arou
 ---
 ${value}` }],
     temperature:0.3,
-    max_tokens:800 // the output is meant to be shorter than the input, so this is already generous
+    max_completion_tokens:800 // the output is meant to be shorter than the input, so this is already generous
   }, { remembered: lastWorkingFormatModel });
   lastWorkingFormatModel = model;
   return textOf(payload).trim();
@@ -953,7 +977,7 @@ async function runQueue(){
 
   if (quota.n + parts.length > GROUNDED_PER_DAY){
     const left = Math.max(0, GROUNDED_PER_DAY - quota.n);
-    if (!confirm(`You've used roughly ${quota.n} of today's ~250 free searches and queued ${parts.length} more. The ones past the limit will fail until Groq's daily allowance resets — this app can't say exactly when, since Groq doesn't publish a fixed clock the way Google does. Nothing will be charged either way. Run anyway?`)) return;
+    if (!confirm(`You've used roughly ${quota.n} of today's ~1,000 free searches and queued ${parts.length} more. The ones past the limit will fail until Groq's daily allowance resets — this app can't say exactly when, since Groq doesn't publish a fixed clock the way Google does. Nothing will be charged either way. Run anyway?`)) return;
   }
 
   const opts = { brand: $("brand").value, condition: $("condition").value };
@@ -1418,11 +1442,11 @@ $("btn-check-models").onclick = async () => {
       const format = models.filter(m => FORMAT_MODELS.includes(m));
       const other = models.filter(m => !SEARCH_MODELS.includes(m) && !FORMAT_MODELS.includes(m));
       const lines = [];
-      lines.push("Search models (used for research, draw from the 250/day allowance):");
+      lines.push("Search models (used for research, each with its own 1,000/day allowance):");
       if (search.length) search.forEach(m => lines.push("  ✓ " + m));
-      else lines.push("  Neither groq/compound nor groq/compound-mini is showing up for this key right now.");
+      else lines.push("  Neither openai/gpt-oss-120b nor openai/gpt-oss-20b is showing up for this key right now.");
       lines.push("");
-      lines.push("Writing models (used to format the listing, much higher daily allowance):");
+      lines.push("Writing models (used to format the listing, a separate allowance from the above):");
       if (format.length) format.forEach(m => lines.push("  ✓ " + m));
       else lines.push("  Neither of the two writing models is showing up for this key right now.");
       if (other.length){
