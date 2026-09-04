@@ -192,7 +192,7 @@
       <div class="track"><div class="fill" id="tally-fill"></div></div>
     </div>
     <div class="gauge" id="quota-gauge" title="">
-      <span><b id="quota-n">0</b> <span id="quota-label">/ 200,000 tokens today</span></span>
+      <span><b id="quota-n">0</b> <span id="quota-label">/ 1,000 searches this month</span></span>
       <div class="track"><div class="fill" id="quota-fill"></div></div>
     </div>
   </div>
@@ -248,36 +248,38 @@
     <div class="dlg-body">
 
       <fieldset>
-        <legend>Groq API key</legend>
+        <legend>Search — Tavily</legend>
         <div class="field" style="margin-top:8px">
-          <input type="password" id="s-key" placeholder="gsk_..." autocomplete="off" spellcheck="false">
-          <div class="hint">Get one free at <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> — just an email, no card at any point. Stored in this browser only — never put it in the repository.</div>
-        </div>
-        <div class="callout">
-          <b>Stay on the Free tier.</b> Free requires no payment method at all, so there's nothing on file to be charged — when you hit the daily limit, requests simply pause until it resets. Don't add a card under Billing to "unlock" the Developer tier; that's the only way this could ever cost money.
-        </div>
-        <div class="callout">
-          <b>Everyone needs their own account.</b> Groq counts usage per organization, and a fresh sign-up is its own organization — so one key each (each person's own email) gives each person their own daily allowance, rather than splitting one.
-        </div>
-        <div class="field" style="margin-top:14px">
-          <label for="s-model">Search model</label>
-          <select id="s-model">
-            <option value="groq/compound">Compound — thorough, can search from a few angles (default)</option>
-            <option value="groq/compound-mini">Compound Mini — faster, one search per part number</option>
-          </select>
-          <div class="hint">Both use Groq's built-in web search, which returns snippets rather than full pages. Both run on top of Groq's GPT-OSS models internally, so they draw on the same kind of daily token budget as those models (~200,000/day) rather than a separate pool — switching between them, or between these and a raw GPT-OSS search model, doesn't create fresh headroom. Compound also has a known, occasional reliability issue — this app retries and falls back automatically when it happens.</div>
+          <input type="password" id="s-tavily-key" placeholder="tvly-..." autocomplete="off" spellcheck="false">
+          <div class="hint">Get one free at <a href="https://tavily.com" target="_blank" rel="noopener">tavily.com</a> — 1,000 searches a month, recurring, no card. This is what actually searches the web for each part number.</div>
         </div>
         <div class="field">
+          <label for="s-tavily-results">Results per search</label>
+          <input type="number" id="s-tavily-results" min="3" max="10">
+          <div class="hint">How many pages Tavily returns per part number. More gives the writing model more to work with, at no extra cost against your monthly search count — each search is 1 credit regardless of how many results come back.</div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Writing — Groq</legend>
+        <div class="field" style="margin-top:8px">
+          <textarea id="s-key" rows="3" placeholder="gsk_..." autocomplete="off" spellcheck="false" style="font:500 13.5px var(--mono)"></textarea>
+          <div class="hint">Get one free at <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> — just an email, no card at any point. One per line if you ever want a backup; this step's cost is small enough that one key is normally plenty. Stored in this browser only — never put these in the repository.</div>
+        </div>
+        <div class="callout">
+          <b>Stay on the Free tier, on both services.</b> Neither Groq nor Tavily's free tier requires a payment method — there's nothing on file to be charged on either. Don't add billing to "unlock" a paid tier on either one; that's the only way this could ever cost money.
+        </div>
+        <div class="field" style="margin-top:14px">
           <label for="s-format-model">Writing model</label>
           <select id="s-format-model">
             <option value="openai/gpt-oss-20b">GPT-OSS 20B — good at following the format rules (default)</option>
             <option value="qwen/qwen3.6-27b">Qwen3.6 27B — larger, sometimes better prose</option>
           </select>
-          <div class="hint">Turns the research into the title, bullets and description. Doesn't search — this has its own separate daily allowance from the search step above, so it won't be what runs you short.</div>
+          <div class="hint">Turns Tavily's search results into the title, bullets and description. A plain text call with no search tool attached, so its cost per listing is small and its own daily allowance (~200,000 tokens/day) is very unlikely to be what runs you short.</div>
         </div>
         <div class="field">
           <button type="button" class="btn tiny" id="btn-check-models">Check available models</button>
-          <div class="hint">Asks Groq directly which models this key can actually reach right now, rather than assuming. Useful if you're seeing a "model not found" error — Groq's free-tier lineup changes over time like every other provider's.</div>
+          <div class="hint">Asks Groq directly which models your first key can actually reach right now, rather than assuming. Useful if you're seeing a "model not found" error — Groq's free-tier lineup changes over time like every other provider's.</div>
           <pre id="model-check-result" class="callout" style="display:none;white-space:pre-wrap;font:500 12.5px/1.6 var(--mono);margin-top:8px"></pre>
         </div>
       </fieldset>
@@ -294,8 +296,7 @@
             <input type="number" id="s-retries" min="0" max="8">
           </div>
         </div>
-        <div class="hint" style="margin-top:-6px">The free tier allows only a few requests a minute. A gap of 4–6 seconds keeps a long batch from tripping the limit. When it trips anyway, the app waits as long as Groq asks and picks up where it left off.</div>
-        <div class="hint" style="margin-top:6px">The search and writing steps use different models, each with its own separate 30-requests-a-minute limit — one running long won't eat into the other's budget.</div>
+        <div class="hint" style="margin-top:-6px">Groq's free tier allows only a few requests a minute for the writing step. A gap of 2–4 seconds keeps a long batch from tripping it. When it trips anyway, the app waits as long as Groq asks and picks up where it left off.</div>
       </fieldset>
 
       <fieldset>
@@ -374,12 +375,20 @@ const store = {
 };
 
 const DEFAULTS = {
-  apiKey:"", model:"groq/compound", formatModel:"openai/gpt-oss-20b",
-  gapSeconds:5, retries:4,
+  apiKey:"", apiKeys:[], tavilyKey:"", formatModel:"openai/gpt-oss-20b",
+  gapSeconds:5, retries:4, tavilyResults:6,
   rules:"", titleMax:200, descMax:2000, pnInTitle:true, target:40
 };
 let settings = Object.assign({}, DEFAULTS);
 try { Object.assign(settings, JSON.parse(store.get("pd.settings") || "{}")); } catch {}
+
+// Earlier versions stored one key as settings.apiKey. Migrate it into the
+// new apiKeys array (which supports rotation) so nobody has to re-enter it.
+if (!Array.isArray(settings.apiKeys)) settings.apiKeys = [];
+if (settings.apiKey && !settings.apiKeys.includes(settings.apiKey)){
+  settings.apiKeys = [settings.apiKey, ...settings.apiKeys];
+  store.set("pd.settings", JSON.stringify(settings));
+}
 
 // A value saved before the 3,000-character cap existed (or edited by hand)
 // would otherwise sit in storage forever, uncapped, until someone happened
@@ -391,21 +400,18 @@ if (typeof settings.rules === "string" && settings.rules.length > RULES_MAX_CHAR
   store.set("pd.settings", JSON.stringify(settings));
 }
 
-// A brief detour: this app moved search from groq/compound to GPT-OSS's
-// browser_search after finding a live, publicly-reported bug in Compound
-// (a generic 413 regardless of content). browser_search turned out to
-// have its own real cost problem instead — Groq's own docs confirm it
-// browses pages interactively rather than returning snippets, and real
-// usage hit 200,000+ tokens on a single call. Compound's web_search is
-// snippet-based and dramatically cheaper per call; the fallback and
-// retry handling built since the original bug was found is now better
-// equipped to absorb its occasional failures than it was the first time.
-// Anyone with the GPT-OSS search model saved from that detour is moved
-// back automatically.
-if (settings.model === "openai/gpt-oss-120b" || settings.model === "openai/gpt-oss-20b"){
-  settings.model = DEFAULTS.model;
-  store.set("pd.settings", JSON.stringify(settings));
-}
+// This app went through two earlier search mechanisms — Groq's Compound
+// systems (a live, publicly-reported bug returning generic 413s) and
+// GPT-OSS's browser_search (fine, but capable of burning 200,000+ tokens
+// on a single call by browsing full pages instead of returning snippets).
+// Both shared one root problem for this app's needs: an agentic search
+// tool bundles searching and reasoning into one call with its cost
+// controlled entirely by the LLM provider. Search now runs through
+// Tavily, a dedicated search API with its own separate, predictable
+// monthly allowance — decoupled entirely from whichever LLM does the
+// writing. The old `model` (search model) setting is retired; anyone
+// with one saved just needs a Tavily key added in Settings.
+delete settings.model;
 
 // Groq deprecated and decommissioned llama-3.3-70b-versatile (August 16,
 // 2026). Their own recommended replacement is qwen/qwen3.6-27b.
@@ -431,23 +437,37 @@ try {
   if (t && t.date === localDay()) tally = t;
 } catch {}
 
-// Groq's own docs describe Compound as "an AI system powered by openly
-// available models" — in practice, groq/compound runs on top of
-// openai/gpt-oss-120b, confirmed directly by a real rate-limit response
-// that named gpt-oss-120b even though the app called groq/compound. That
-// means Compound's real daily constraint is the SAME kind of token
-// budget as the plain GPT-OSS models (200,000/day), not a separate,
-// independent pool — switching between Compound and a raw GPT-OSS model
-// doesn't create fresh headroom, because it's the same underlying meter.
-// Tracking request counts here would hide exactly the risk this gauge
-// exists to catch, so it tracks real tokens for whichever search model
-// is active, universally.
-const SEARCH_TPD_ESTIMATE = 200000;
+// Tavily's free tier is 1,000 searches/month, recurring — a monthly
+// allowance, not daily, so it's tracked on the calendar month rather
+// than the day the rest of this app uses.
+function localMonth(){ return new Date().toLocaleDateString("en-CA").slice(0, 7); }
+const TAVILY_FREE_PER_MONTH = 1000;
 
-let quota = { date: localDay(), requestsByModel: {}, tokensByModel: {} };
+let tavilyQuota = { month: localMonth(), count: 0 };
+try {
+  const tq = JSON.parse(store.get("pd.tavilyQuota") || "null");
+  if (tq && tq.month === localMonth()) tavilyQuota = tq;
+} catch {}
+
+function bumpTavilyQuota(){
+  if (tavilyQuota.month !== localMonth()) tavilyQuota = { month: localMonth(), count: 0 };
+  tavilyQuota.count++;
+  store.set("pd.tavilyQuota", JSON.stringify(tavilyQuota));
+  drawGauges();
+}
+
+// Groq's writing model still has its own daily token allowance
+// (~200,000/day), tracked per model + key so a rotated-to key shows its
+// own real usage rather than a misleading combined total. It's no
+// longer the header's primary gauge, since Tavily is now the one most
+// likely to bind — but it's kept for the pre-flight batch warning.
+function quotaKey(model, apiKey){ return model + "::" + (apiKey || "").slice(-6); }
+const WRITING_TPD_ESTIMATE = 200000;
+
+let quota = { date: localDay(), tokensByModel: {} };
 try {
   const q = JSON.parse(store.get("pd.quota") || "null");
-  if (q && q.date === localDay()) quota = { date: q.date, requestsByModel: q.requestsByModel || {}, tokensByModel: q.tokensByModel || {} };
+  if (q && q.date === localDay()) quota = { date: q.date, tokensByModel: q.tokensByModel || {} };
 } catch {}
 
 function drawGauges(){
@@ -455,12 +475,11 @@ function drawGauges(){
   $("tally-target").textContent = settings.target;
   $("tally-fill").style.width = Math.min(100, (tally.n / Math.max(1, settings.target)) * 100) + "%";
 
-  const used = quota.tokensByModel[settings.model] || 0;
-  $("quota-n").textContent = used.toLocaleString();
-  $("quota-label").textContent = "/ 200,000 tokens today";
-  $("quota-gauge").title = "Real tokens used today by your current search model, from Groq's own response data. Compound runs on top of the GPT-OSS models internally, so it draws on the same kind of daily token budget (about 200,000/day) rather than a separate pool — Compound and Compound Mini may even share a pool with each other if they route through the same underlying model, so treat this as a useful signal, not an exact ceiling.";
+  $("quota-n").textContent = tavilyQuota.count.toLocaleString();
+  $("quota-label").textContent = "/ 1,000 searches this month";
+  $("quota-gauge").title = "Real Tavily searches used this month, from Tavily's own response data. Tavily's free tier is 1,000/month, recurring — this is the number that actually governs how many listings you can research for free.";
 
-  const pct = Math.min(100, (used / SEARCH_TPD_ESTIMATE) * 100);
+  const pct = Math.min(100, (tavilyQuota.count / TAVILY_FREE_PER_MONTH) * 100);
   const fill = $("quota-fill");
   fill.style.width = pct + "%";
   fill.className = "fill" + (pct >= 95 ? " bad" : pct >= 80 ? " warn" : "");
@@ -469,18 +488,15 @@ function bumpTally(){
   if (tally.date !== localDay()) tally = { date: localDay(), n: 0 };
   tally.n++; store.set("pd.tally", JSON.stringify(tally)); drawGauges();
 }
-// Call with the model that actually served the response and the real
-// token cost Groq reported for it. Both dimensions are tracked regardless
-// of model — which one the gauge shows depends on which one actually
-// governs for that model family.
-function bumpQuota(model, tokensUsed){
-  if (quota.date !== localDay()) quota = { date: localDay(), requestsByModel: {}, tokensByModel: {} };
-  if (model){
-    quota.requestsByModel[model] = (quota.requestsByModel[model] || 0) + 1;
-    if (tokensUsed) quota.tokensByModel[model] = (quota.tokensByModel[model] || 0) + tokensUsed;
+// Call with the model and key that actually served the response, and the
+// real token cost Groq reported for it.
+function bumpQuota(model, tokensUsed, apiKey){
+  if (quota.date !== localDay()) quota = { date: localDay(), tokensByModel: {} };
+  if (model && tokensUsed){
+    const key = quotaKey(model, apiKey);
+    quota.tokensByModel[key] = (quota.tokensByModel[key] || 0) + tokensUsed;
   }
   store.set("pd.quota", JSON.stringify(quota));
-  drawGauges();
 }
 
 /* ---------- app state ---------- */
@@ -585,7 +601,7 @@ function retryDelayMs(res, payload){
   return 0;
 }
 
-async function callGroq(model, body, { signal, onNote } = {}){
+async function callGroq(model, body, { signal, onNote, apiKey }){
   const attempts = Math.max(0, settings.retries) + 1;
   let lastErr = null;
 
@@ -596,7 +612,7 @@ async function callGroq(model, body, { signal, onNote } = {}){
         method:"POST",
         headers:{
           "content-type":"application/json",
-          "authorization": "Bearer " + settings.apiKey,
+          "authorization": "Bearer " + apiKey,
           // Every Groq doc example for compound_custom pairs it with this
           // header. Kept on all requests regardless, since it's harmless
           // even for calls that don't use compound_custom.
@@ -671,23 +687,21 @@ function readableDailyLimitError(model, payload){
   return `${model} has hit its free-tier daily limit, and the wait to clear it is too long to sit through here.${resetsIn} This is separate from the in-app usage counter. Try again later, or switch to a different Groq account's key for the rest of today.`;
 }
 
-/* Free-tier model lineups shift over time on every provider, not just
-   Google's. Try the operator's chosen model, then whichever one last
-   worked in this tab, then fall back through the given alternates, and
-   only fail once every option is exhausted. */
-const SEARCH_MODELS = ["groq/compound", "groq/compound-mini"];
+/* Free-tier model lineups shift over time on every provider. Try the
+   operator's chosen model, then whichever one last worked in this tab,
+   then fall back through the given alternates, and only fail once every
+   option is exhausted. */
 const FORMAT_MODELS = ["openai/gpt-oss-20b", "qwen/qwen3.6-27b"];
-let lastWorkingSearchModel = null;
 let lastWorkingFormatModel = null;
 
-async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, remembered } = {}){
+async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, remembered, apiKey }){
   const candidates = [...new Set([remembered, preferred, ...fallbacks].filter(Boolean))];
   const tried = [];
   let lastErr = null;
 
   for (const model of candidates){
     try {
-      const payload = await callGroq(model, body, { signal, onNote });
+      const payload = await callGroq(model, body, { signal, onNote, apiKey });
       if (model !== preferred) onNote?.(`Using ${model} for this one — ${tried[0] || preferred} wasn't available just now.`);
       return { payload, model };
     } catch (e){
@@ -704,7 +718,7 @@ async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, rememb
   const daily = lastErr?._daily;
   const finalErr = new Error(
     daily
-      ? `Both ${tried.join(" and ")} have hit their free-tier daily limit. This won't clear with more waiting today — try again tomorrow, or switch to a different Groq account's key for the rest of today.`
+      ? `Both ${tried.join(" and ")} have hit their free-tier daily limit on this key.`
       : lastErr?._jsonGlitch
         ? `Both ${tried.join(" and ")} kept producing a malformed response for this part number, even after retrying each. This is a known reliability quirk in these models, not anything wrong with the part number — running it again on its own often works.`
         : lastErr?._status === 413
@@ -713,15 +727,53 @@ async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, rememb
             `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
   );
   finalErr._status = lastErr?._status;
+  finalErr._daily = daily;
   finalErr._raw = lastErr?._raw;
   finalErr._model = lastErr?._model;
   throw finalErr;
 }
 
-/* Diagnostic: asks Groq directly which models this key can call. */
-async function listAvailableModels(){
+/* Every configured key is its own free-tier organization with its own
+   daily allowance. Rather than sit through a genuinely long daily-limit
+   wait on one key, this tries the next configured key first — a fresh
+   free account is a real, zero-cost way to keep going today rather than
+   waiting. Only a daily-limit failure triggers rotation: a bad key, a
+   missing model, or anything else would fail identically on every key,
+   so there's no point trying them all. */
+let activeKeyIndex = 0;
+
+async function callWithKeyRotation(preferred, fallbacks, body, { signal, onNote, remembered }){
+  const keys = (settings.apiKeys || []).filter(Boolean);
+  if (!keys.length) throw new Error("No API key configured. Add one in Settings.");
+
+  const start = activeKeyIndex % keys.length;
+  const order = keys.map((_, i) => (start + i) % keys.length);
+  let lastErr = null;
+
+  for (const idx of order){
+    try {
+      const result = await callGroqAuto(preferred, fallbacks, body, { signal, onNote, remembered, apiKey: keys[idx] });
+      activeKeyIndex = idx;
+      return { ...result, apiKey: keys[idx], keyIndex: idx };
+    } catch (e){
+      if (e.name === "AbortError") throw e;
+      if (!e._daily) throw e; // rotating keys only helps for a daily-limit failure
+      lastErr = e;
+      if (keys.length > 1) onNote?.(`Key ${idx + 1} of ${keys.length} has hit today's limit — switching to the next one instead of waiting.`);
+    }
+  }
+
+  throw new Error(
+    keys.length > 1
+      ? `All ${keys.length} configured keys have hit today's daily limit. Try again tomorrow, or add another free Groq account's key in Settings.`
+      : `${lastErr?.message || "Today's daily limit has been reached."} Add a second free Groq account's key in Settings to keep going today instead of waiting — Groq's daily limit is per account, so a second key gets its own fresh allowance.`
+  );
+}
+
+/* Diagnostic: asks Groq directly which models a key can call. */
+async function listAvailableModels(apiKey){
   const res = await fetch(MODELS_LIST_URL, {
-    headers:{ "authorization": "Bearer " + settings.apiKey }
+    headers:{ "authorization": "Bearer " + apiKey }
   });
   let payload; try { payload = await res.json(); } catch { payload = null; }
   if (!res.ok) throw new Error(readableError(res.status, payload));
@@ -736,51 +788,42 @@ function textOf(payload){
   return payload?.choices?.[0]?.message?.content || "";
 }
 
-function finishedCleanly(payload){
-  const fr = payload?.choices?.[0]?.finish_reason;
-  return !fr || fr === "stop";
-}
+const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
 
-/* Groq's compound models return the tools they actually ran in
-   executed_tools. Each search tool call carries the query it sent and a
-   text blob of results; URLs are pulled out of that text rather than
-   invented, so a listing can never cite a source the model didn't see. */
-function groundingOf(payload){
-  const tools = payload?.choices?.[0]?.message?.executed_tools || [];
-  const queries = [];
-  const urls = new Set();
-  const urlRe = /https?:\/\/[^\s")\]]+/g;
-
-  // Different built-in tools (compound's "search", GPT-OSS's
-  // "browser_search") may label this entry differently, and we're not
-  // fully certain of the exact string every variant uses. Rather than
-  // filter on one assumed type value and risk silently finding zero
-  // sources on a genuine success, process every entry Groq actually
-  // returned and pull out whatever's there.
-  for (const t of tools){
-    try {
-      const args = JSON.parse(t.arguments || "{}");
-      if (args.query) queries.push(args.query);
-    } catch {}
-    // Some tool shapes (Groq's own web_search docs show this) carry a
-    // structured search_results field rather than a plain text blob.
-    if (Array.isArray(t.search_results?.results)){
-      for (const r of t.search_results.results){
-        if (r?.url) urls.add(r.url);
-      }
-    }
-    const text = t.output || "";
-    let m;
-    while ((m = urlRe.exec(text))) urls.add(m[0].replace(/[.,;:]+$/, ""));
+/* Calls Tavily's search API directly. Returns { sources, answer } where
+   sources are Tavily's own structured results — never scraped or
+   regex-extracted, so a listing can never cite a page Tavily didn't
+   actually return. */
+async function tavilySearch(query, apiKey, maxResults){
+  let res;
+  try {
+    res = await fetch(TAVILY_SEARCH_URL, {
+      method:"POST",
+      headers:{ "content-type":"application/json", "authorization": "Bearer " + apiKey },
+      body: JSON.stringify({ query, max_results: maxResults, search_depth:"basic" })
+    });
+  } catch (e){
+    // A fetch that throws before ever reaching a response (rather than
+    // an HTTP error status) usually means the browser blocked the
+    // request outright — most commonly CORS. Worth naming explicitly
+    // rather than a generic network-failure message, since the fix is
+    // completely different (a proxy) from a real API error.
+    throw new Error("Couldn't reach Tavily. If this happens on every attempt, the browser may be blocking the request (a CORS restriction) rather than Tavily itself being down — see the README for a small free proxy workaround.");
   }
 
-  const sources = [...urls].slice(0, 10).map(u => {
-    let host = u;
-    try { host = new URL(u).hostname.replace(/^www\./, ""); } catch {}
-    return { title: host, url: u };
-  });
+  let payload; try { payload = await res.json(); } catch { payload = null; }
+  if (!res.ok){
+    const msg = payload?.detail?.error || payload?.error || `Tavily returned ${res.status}.`;
+    const err = new Error(`Tavily search failed: ${msg}`);
+    err._status = res.status;
+    throw err;
+  }
 
-  return { sources, queries, searchPerformed: tools.length > 0 };
+  const sources = (payload?.results || [])
+    .filter(r => r?.url)
+    .map(r => ({ title: r.title || r.url, url: r.url, content: (r.content || "").slice(0, 1200) }));
+
+  return { sources, answer: payload?.answer || "" };
 }
 
 /* ============================================================
@@ -788,35 +831,20 @@ function groundingOf(payload){
    ============================================================ */
 
 const ACCURACY_RULES = `Accuracy matters more than completeness. This copy gets published as written, so a wrong specification is worse than a missing one.
-- State a specification only if it appears in a search result you actually retrieved. Do not infer specs from part numbers that look similar, and do not fall back on general knowledge about the product line.
+- State a specification only if it appears in the search results below. Do not infer specs from part numbers that look similar, and do not fall back on general knowledge about the product line.
 - Never invent capacities, speeds, socket or chipset names, port counts, panel sizes, resolutions, colours, dimensions or weights.
 - Claim compatibility with a system only where a source lists that system.
 - Trust manufacturer pages and official spec sheets first, then large distributors and parts specialists, then general marketplaces. Marketplace listings are weak evidence because sellers get part numbers wrong.
-- If the number matches several different products, or you cannot confirm what it is, say so plainly rather than picking the most likely one.`;
+- If the results are ambiguous, contradictory, or don't clearly identify the part, say so plainly in "warnings" rather than picking the most likely guess.`;
 
-function researchPrompt(part, opts){
-  const lines = [];
-  lines.push(`You research computer hardware part numbers for an IT hardware reseller (Dell, HP, Lenovo, Jabra, Poly, NVIDIA, AMD, Seagate and similar makers; also panels, bezels, cables, docks, spares).`);
-  lines.push("");
-  lines.push(`Use your web search tool to identify this part number — do not answer from memory alone. A part number is not something to guess at, and you have a search tool for exactly this reason.`);
-  lines.push("");
-  lines.push(`Part number: ${part}`);
-  if (opts.brand) lines.push(`Brand suggested by the operator (verify, don't assume): ${opts.brand}`);
-  lines.push("");
-  lines.push(ACCURACY_RULES);
-  lines.push("");
-  lines.push(`Try a few angles if needed: the bare part number; part number + brand; part number + "specifications" or "datasheet"; with and without leading zeros.`);
-  lines.push("");
-  lines.push(`Write a short plain-text brief covering: brand/model/what it physically is; confirmed specs and their source type; systems it's explicitly listed as fitting; equivalent part numbers; your confidence and any disagreement between sources. For a colleague, not a customer — no marketing language. If you couldn't identify it, say so plainly.`);
-  return lines.join("\n");
-}
-
-function formatPrompt(part, opts, brief){
+function formatPrompt(part, opts, sources){
   const t = settings.titleMax, d = settings.descMax;
   const lines = [];
-  lines.push(`Below is a research brief on a computer hardware part number. Turn it into listing copy for a marketplace, and return it as a single JSON object.`);
+  lines.push(`You write marketplace listing copy for computer hardware part numbers, for an IT hardware reseller (Dell, HP, Lenovo, Jabra, Poly, NVIDIA, AMD, Seagate and similar makers; also panels, bezels, cables, docks, spares).`);
   lines.push("");
-  lines.push(`Use only what the brief contains. Do not add specifications, compatibility or model names that aren't in it. If the brief says something is unconfirmed, either leave it out or record it in "warnings" — never present it as fact.`);
+  lines.push(`Below are real web search results for this part number. Use only what they actually say — do not add specifications, compatibility or model names that aren't in them, and do not fall back on general knowledge about the product line. If the results don't clearly identify the part, say so in "warnings" rather than guessing.`);
+  lines.push("");
+  lines.push(ACCURACY_RULES);
   lines.push("");
   lines.push(`Write for a buyer who searches by part number and then skims for whether it fits. Plain, concrete, specific. No marketing adjectives, no exclamation marks, no invented benefits, no first person. Never write a placeholder like "N/A" or "Unknown" into the title, bullets or description — leave the detail out instead.`);
   lines.push("");
@@ -839,13 +867,14 @@ function formatPrompt(part, opts, brief){
   lines.push("");
   lines.push(`Field rules:`);
   lines.push(`- title: at most ${t} characters, counted as characters. Brand first, then model or series, then the product type, then the two to four specifications a buyer filters on.${settings.pnInTitle ? " Include the part number, since buyers search for it." : " Do not include the part number."} No pipes, no ALL CAPS words, no repeated words, no filler such as "High Quality" or "Fast Shipping".`);
-  lines.push(`- bullets: exactly five, each a complete statement under 200 characters, each opening with the concrete detail rather than a label. Cover different ground in each: what it is and where it goes; the headline specification; a second specification or physical detail; compatibility or what it replaces, only where the brief supports it; and condition or what is in the box. Do not restate the title.`);
+  lines.push(`- bullets: exactly five, each a complete statement under 200 characters, each opening with the concrete detail rather than a label. Cover different ground in each: what it is and where it goes; the headline specification; a second specification or physical detail; compatibility or what it replaces, only where the results support it; and condition or what is in the box. Do not restate the title.`);
   lines.push(`- description: at most ${d} characters, counted as characters. Two to four short paragraphs of plain prose, no headings and no bullet characters. Open with the brand, model and part number so the first line works as a search snippet. Then what it does and where it fits, then the specifications, then condition and anything worth checking before ordering. Let the main search terms recur naturally two or three times across the whole text, no more.`);
-  lines.push(`- specs: up to twelve rows taken from the brief.`);
-  lines.push(`- warnings: what the operator must check before publishing — ambiguity about which product this is, disagreement between sources, thin sourcing. Empty array if the brief was solid.`);
-  lines.push(`- confidence: how well the brief pins this part down.`);
+  lines.push(`- specs: up to twelve rows taken from the search results.`);
+  lines.push(`- warnings: what the operator must check before publishing — ambiguity about which product this is, disagreement between sources, thin sourcing. Empty array if the results were solid.`);
+  lines.push(`- confidence: how well the search results pin this part down.`);
   lines.push("");
   lines.push(`Part number: ${part}`);
+  if (opts.brand) lines.push(`Brand suggested by the operator (verify against the results, don't assume it): ${opts.brand}`);
   if (opts.condition) lines.push(`Condition to state: ${opts.condition}`);
   if (settings.rules && settings.rules.trim()){
     lines.push("");
@@ -855,84 +884,59 @@ function formatPrompt(part, opts, brief){
   lines.push("");
   lines.push(`Count the characters of the title and description before answering, and shorten them if they run over.`);
   lines.push("");
-  lines.push(`--- RESEARCH BRIEF ---`);
-  lines.push(brief);
+  lines.push(`--- SEARCH RESULTS ---`);
+  if (!sources.length){
+    lines.push(`(No search results came back for this part number.)`);
+  } else {
+    sources.forEach((s, i) => {
+      lines.push(`[${i + 1}] ${s.title}`);
+      lines.push(s.url);
+      lines.push(s.content);
+      lines.push("");
+    });
+  }
   return lines.join("\n");
 }
 
 /* ============================================================
-   The two-step run
+   The run: one Tavily search, one Groq synthesis call
    ============================================================ */
 
 async function research(part, opts, onNote, signal){
+  const tavilyKey = (settings.tavilyKey || "").trim();
+  if (!tavilyKey) throw new Error("No Tavily key configured. Add one in Settings.");
+
   onNote({ text:"Searching for " + part });
+  const query = `${part}${opts.brand ? " " + opts.brand : ""} specifications datasheet replacement part`;
+  const { sources } = await tavilySearch(query, tavilyKey, settings.tavilyResults || 6);
+  bumpTavilyQuota();
 
-  const { payload, model: usedSearchModel } = await callGroqAuto(settings.model, SEARCH_MODELS, {
-    messages:[{ role:"user", content: researchPrompt(part, opts) }],
-    temperature:0.2,
-    max_completion_tokens:1500,
-    // Compound's web_search returns snippets, not full pages — dramatically
-    // cheaper per call than GPT-OSS's browser_search, which this app used
-    // briefly and moved off after real usage hit 200,000+ tokens on a
-    // single call. visit_website (full-page fetches) stays deliberately
-    // disabled; it's the other lever that would blow the same budget.
-    // Compound does have its own known reliability issue (a live,
-    // publicly-reported bug returning a generic 413 regardless of
-    // content) — accepted here as the better trade against browser_search's
-    // cost, backed by this app's retry-and-fallback handling.
-    compound_custom:{ tools:{ enabled_tools:["web_search"] } }
-  }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingSearchModel });
-
-  lastWorkingSearchModel = usedSearchModel;
-  bumpQuota(usedSearchModel, payload?.usage?.total_tokens);
-
-  let brief = textOf(payload).trim();
-  const grounding = groundingOf(payload);
-
-  if (!brief){
-    throw new Error(finishedCleanly(payload)
-      ? "The research step came back empty. Try running this part number again."
-      : `The research step stopped early (${payload?.choices?.[0]?.finish_reason}). Try running this part number again.`);
+  if (!sources.length){
+    onNote({ text:"No search results came back for this one — treat the result as unverified." });
+  } else {
+    onNote({ queries:[query] });
+    onNote({ text:`Read ${sources.length} source${sources.length === 1 ? "" : "s"}. Writing the listing.` });
   }
 
-  // A search or visit-website tool can occasionally return a large chunk of
-  // raw page text, and if the model echoes much of that into its answer,
-  // the brief can be far bigger than a "brief" should be. Cap it before it
-  // goes into the next request. This also matters for a reason beyond raw
-  // size: the format step's model (openai/gpt-oss-20b) has only an 8,000
-  // tokens-per-minute ceiling on Groq's free tier — the tightest of any
-  // model this app uses — and prompt tokens plus the completion budget
-  // both count against that ceiling in a single request. Keeping the
-  // brief modest leaves real headroom instead of nearly maxing it out.
-  const MAX_BRIEF_CHARS = 4000;
-  if (brief.length > MAX_BRIEF_CHARS){
-    brief = brief.slice(0, MAX_BRIEF_CHARS) + "\n\n[Brief truncated — the research step returned more text than expected.]";
-    onNote({ text:"The research came back unusually long and was trimmed before writing the listing." });
-  }
-
-  if (grounding.queries.length) onNote({ queries: grounding.queries });
-  if (!grounding.searchPerformed) onNote({ text:"The model didn't use its search tool for this one — treat the result as unverified." });
-  else onNote({ text:`Read ${grounding.sources.length} source${grounding.sources.length === 1 ? "" : "s"}. Writing the listing.` });
-
-  const { payload: formatted, model: usedFormatModel } = await callGroqAuto(settings.formatModel, FORMAT_MODELS, {
-    messages:[{ role:"user", content: formatPrompt(part, opts, brief) }],
+  const { payload: formatted, model: usedFormatModel, apiKey: usedFormatKey } = await callWithKeyRotation(settings.formatModel, FORMAT_MODELS, {
+    messages:[{ role:"user", content: formatPrompt(part, opts, sources) }],
     temperature:0.3,
     max_completion_tokens:1400, // a title, five bullets, description and specs fit comfortably well under this
     response_format:{ type:"json_object" }
   }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingFormatModel });
 
   lastWorkingFormatModel = usedFormatModel;
-  bumpQuota(usedFormatModel, formatted?.usage?.total_tokens);
+  bumpQuota(usedFormatModel, formatted?.usage?.total_tokens, usedFormatKey);
 
   const raw = textOf(formatted).trim();
   const data = extractJson(raw);
   if (!data) throw new Error("The listing came back unreadable. Try running this part number again.");
 
-  if (!grounding.searchPerformed){
-    data.warnings = [...(data.warnings || []), "No web search was performed for this part number — everything above is unverified."];
+  if (!sources.length){
+    data.warnings = [...(data.warnings || []), "No search results were found for this part number — everything above is unverified."];
   }
-  data._grounding = grounding;
-  data._brief = brief;
+  data._sources = sources;
+  data._queries = [query];
   return data;
 }
 
@@ -976,7 +980,7 @@ function extractJson(text){
 
 /* A short follow-up with no search, used to trim an overlong field. */
 async function shorten(field, value, limit){
-  const { payload, model } = await callGroqAuto(settings.formatModel, FORMAT_MODELS, {
+  const { payload, model, apiKey } = await callWithKeyRotation(settings.formatModel, FORMAT_MODELS, {
     messages:[{ role:"user", content:
 `Rewrite this product listing ${field} so it is at most ${limit} characters. It is currently ${value.length}.
 
@@ -990,6 +994,7 @@ ${value}` }],
     max_completion_tokens:800 // the output is meant to be shorter than the input, so this is already generous
   }, { remembered: lastWorkingFormatModel });
   lastWorkingFormatModel = model;
+  bumpQuota(model, payload?.usage?.total_tokens, apiKey);
   return textOf(payload).trim();
 }
 
@@ -1028,9 +1033,14 @@ function oversizedPartCount(raw){
 async function runQueue(){
   if (state.running){ state.abort?.abort(); return; }
 
-  if (!settings.apiKey){
+  if (!(settings.apiKeys || []).filter(Boolean).length){
     openSettings();
     toast("Add your free Groq key to get started.");
+    return;
+  }
+  if (!(settings.tavilyKey || "").trim()){
+    openSettings();
+    toast("Add your free Tavily key to get started.");
     return;
   }
 
@@ -1047,14 +1057,12 @@ async function runQueue(){
     toast(`Skipped ${dropped} line${dropped === 1 ? "" : "s"} over ${MAX_PART_LENGTH} characters — too long to be a real part number.`);
   }
 
-  // A rough planning check — real usage is tracked from each response's
-  // actual data after the fact. This just warns before queuing a batch
-  // that's likely to run into today's real limit for the search model.
-  const ESTIMATED_TOKENS_PER_LISTING = 2000;
-  const usedSoFar = quota.tokensByModel[settings.model] || 0;
-  const projected = usedSoFar + parts.length * ESTIMATED_TOKENS_PER_LISTING;
-  if (projected > SEARCH_TPD_ESTIMATE){
-    if (!confirm(`${settings.model} has used roughly ${usedSoFar.toLocaleString()} of its ~${SEARCH_TPD_ESTIMATE.toLocaleString()} free tokens today, and this batch will likely need more than what's left. Groq's daily token limit behaves as a rolling window rather than a fixed reset, so this may clear itself within minutes to tens of minutes rather than requiring a wait until tomorrow — but some part numbers in this batch may still fail today. Nothing will be charged either way. Run anyway?`)) return;
+  // Tavily's monthly quota is the one most likely to bind, since each
+  // listing spends exactly one search. Warn before queuing a batch that
+  // would run past what's left this month.
+  const tavilyLeft = TAVILY_FREE_PER_MONTH - tavilyQuota.count;
+  if (parts.length > tavilyLeft){
+    if (!confirm(`You've used ${tavilyQuota.count.toLocaleString()} of this month's 1,000 free Tavily searches (${tavilyLeft.toLocaleString()} left) and queued ${parts.length} more. The ones past the limit will fail until Tavily's monthly allowance resets. Nothing will be charged either way. Run anyway?`)) return;
   }
 
   const opts = { brand: $("brand").value, condition: $("condition").value };
@@ -1117,7 +1125,7 @@ function normalise(d, part){
   const arr = (v) => Array.isArray(v) ? v : [];
   const bullets = arr(d.bullets).map(s).filter(Boolean);
   while (bullets.length < 5) bullets.push("");
-  const g = d._grounding || { sources:[], queries:[], searchPerformed:false };
+  const sources = arr(d._sources).map(x => ({ title: s(x.title), url: s(x.url) })).filter(x => x.url);
   return {
     part_number: s(d.part_number) || part,
     brand: s(d.brand),
@@ -1133,9 +1141,9 @@ function normalise(d, part){
     compatibility: arr(d.compatibility).map(s).filter(Boolean),
     alternate_part_numbers: arr(d.alternate_part_numbers).map(s).filter(Boolean),
     warnings: arr(d.warnings).map(s).filter(Boolean),
-    sources: g.sources,
-    queries: g.queries,
-    searchPerformed: g.searchPerformed
+    sources,
+    queries: arr(d._queries),
+    searchPerformed: sources.length > 0
   };
 }
 
@@ -1203,9 +1211,9 @@ function wireRetry(item){
 function emptyView(){
   return `<div class="empty">
     <h1>Give it a part number.</h1>
-    <p>It searches the web, works out what the part actually is, and writes the title, five bullets and the description — with the sources it used, so you can spot-check anything that matters.</p>
+    <p>It searches the web with Tavily, then has Groq turn the results into a title, five bullets and a description — with the sources it used, so you can spot-check anything that matters.</p>
     <ol>
-      <li>Get a free key at <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> and paste it into <b>Settings</b>.</li>
+      <li>Get a free key at <a href="https://tavily.com" target="_blank" rel="noopener">tavily.com</a> (search) and another at <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> (writing), and paste both into <b>Settings</b>.</li>
       <li>Paste your part numbers, one per line — <code>YF8P5</code>, <code>0X8DXD</code>.</li>
       <li>Press <b>Build listings</b> and let the batch run.</li>
     </ol>
@@ -1466,8 +1474,9 @@ function exportCsv(){
    ============================================================ */
 
 function openSettings(){
-  $("s-key").value = settings.apiKey;
-  $("s-model").value = settings.model;
+  $("s-key").value = (settings.apiKeys || []).join("\n");
+  $("s-tavily-key").value = settings.tavilyKey || "";
+  $("s-tavily-results").value = settings.tavilyResults || 6;
   $("s-format-model").value = settings.formatModel;
   $("s-gap").value = settings.gapSeconds;
   $("s-retries").value = settings.retries;
@@ -1481,10 +1490,16 @@ function openSettings(){
   $("settings").showModal();
 }
 
+function parseApiKeys(text){
+  return text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+}
+
 $("settings").addEventListener("close", () => {
   if ($("settings").returnValue !== "save") return;
-  settings.apiKey = $("s-key").value.trim();
-  settings.model = $("s-model").value;
+  settings.apiKeys = parseApiKeys($("s-key").value);
+  settings.apiKey = settings.apiKeys[0] || ""; // kept for backward compatibility only
+  settings.tavilyKey = $("s-tavily-key").value.trim();
+  settings.tavilyResults = Math.min(10, Math.max(3, +$("s-tavily-results").value || 6));
   settings.formatModel = $("s-format-model").value;
   settings.gapSeconds = Math.min(60, Math.max(0, +$("s-gap").value || 0));
   settings.retries = Math.min(8, Math.max(0, +$("s-retries").value || 0));
@@ -1493,8 +1508,9 @@ $("settings").addEventListener("close", () => {
   settings.descMax = Math.max(200, +$("s-desc-max").value || 2000);
   settings.pnInTitle = $("s-pn-title").checked;
   settings.target = Math.max(1, +$("s-target").value || 40);
+  activeKeyIndex = 0;
   saveSettings(); drawGauges(); draw();
-  toast("Saved.");
+  toast(settings.apiKeys.length > 1 ? `Saved. ${settings.apiKeys.length} Groq keys configured — will rotate automatically.` : "Saved.");
 });
 
 $("btn-settings").onclick = openSettings;
@@ -1502,28 +1518,22 @@ $("s-cancel").onclick = () => $("settings").close("cancel");
 
 $("btn-check-models").onclick = async () => {
   const btn = $("btn-check-models"), out = $("model-check-result");
-  const key = $("s-key").value.trim();
-  if (!key){ toast("Paste a key first."); return; }
-  const savedKey = settings.apiKey;
-  settings.apiKey = key; // check against whatever's typed, even if not saved yet
+  const keys = parseApiKeys($("s-key").value);
+  if (!keys.length){ toast("Paste a key first."); return; }
 
   btn.disabled = true; btn.textContent = "Checking…";
   out.style.display = "block";
-  out.textContent = "Asking Groq…";
+  out.textContent = keys.length > 1 ? `Asking Groq (checking key 1 of ${keys.length})…` : "Asking Groq…";
   try {
-    const models = await listAvailableModels();
+    const models = await listAvailableModels(keys[0]);
     if (!models.length){
       out.textContent = "The key works, but no models came back. Something is off with the account itself.";
     } else {
-      const search = models.filter(m => SEARCH_MODELS.includes(m));
       const format = models.filter(m => FORMAT_MODELS.includes(m));
-      const other = models.filter(m => !SEARCH_MODELS.includes(m) && !FORMAT_MODELS.includes(m));
+      const other = models.filter(m => !FORMAT_MODELS.includes(m));
       const lines = [];
-      lines.push("Search models (used for research — Compound runs on GPT-OSS internally, so it shares that same ~200,000-tokens/day budget rather than having a separate pool):");
-      if (search.length) search.forEach(m => lines.push("  ✓ " + m));
-      else lines.push("  Neither groq/compound nor groq/compound-mini is showing up for this key right now.");
-      lines.push("");
-      lines.push("Writing models (used to format the listing, a separate allowance from the above):");
+      if (keys.length > 1) lines.push(`Checked key 1 of ${keys.length} only — the others are assumed to work the same way.`, "");
+      lines.push("Writing models (turn Tavily's search results into the listing):");
       if (format.length) format.forEach(m => lines.push("  ✓ " + m));
       else lines.push("  Neither of the two writing models is showing up for this key right now.");
       if (other.length){
@@ -1537,7 +1547,6 @@ $("btn-check-models").onclick = async () => {
   } catch (e){
     out.textContent = e.message;
   } finally {
-    settings.apiKey = savedKey; // don't persist an unsaved key from a Cancel
     btn.disabled = false; btn.textContent = "Check available models";
   }
 };
@@ -1574,7 +1583,7 @@ window.addEventListener("beforeunload", (e) => {
 drawGauges();
 drawQueue();
 draw();
-if (!settings.apiKey) setTimeout(openSettings, 400);
+if (!(settings.apiKeys || []).filter(Boolean).length) setTimeout(openSettings, 400);
 </script>
 </body>
 </html>
