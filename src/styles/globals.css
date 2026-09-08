@@ -1,0 +1,191 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   Base
+   ============================================================ */
+
+@layer base {
+  :root {
+    /* Accent lives here rather than in the Tailwind config so the glow
+       utilities below and any inline style can share one source of
+       truth for the colour. */
+    --accent: 16 185 129;        /* emerald-500 */
+    --accent-soft: 52 211 153;   /* emerald-400 */
+    --warn: 234 179 8;           /* yellow-500  */
+    --stop: 244 63 94;           /* rose-500    */
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply dark:bg-slate-950 dark:text-slate-100;
+    font-feature-settings: "cv02", "cv03", "cv04";
+  }
+
+  /* One visible focus treatment for everything interactive. Browsers
+     draw a default ring, but it disappears against dark backgrounds,
+     and losing keyboard focus visibility is the fastest way to make a
+     tool like this unusable without a mouse. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    @apply outline-none ring-2 ring-emerald-500/70 ring-offset-2;
+    @apply ring-offset-slate-50 dark:ring-offset-slate-950;
+  }
+
+  /* Tabular figures everywhere a number changes in place, so counters
+     and character counts don't jitter as digits change width. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
+
+/* ============================================================
+   Components
+   ============================================================ */
+
+@layer components {
+  .pd-surface {
+    @apply bg-white border border-slate-200 rounded-xl;
+    @apply dark:bg-slate-900 dark:border-slate-800;
+  }
+
+  .pd-inset {
+    @apply bg-slate-50 border border-slate-200 rounded-lg;
+    @apply dark:bg-slate-950/60 dark:border-slate-800;
+  }
+
+  .pd-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-1.5;
+    @apply text-sm font-medium transition-colors duration-150;
+    @apply border-slate-200 bg-white text-slate-700 hover:bg-slate-100;
+    @apply dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800;
+    @apply disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white;
+    @apply dark:disabled:hover:bg-slate-900;
+  }
+
+  /* The one high-contrast action on screen. Deliberately the only place
+     the accent is used as a fill rather than a hairline or a glow. */
+  .pd-btn-primary {
+    @apply border-transparent bg-emerald-600 text-white;
+    @apply hover:bg-emerald-500 dark:bg-emerald-500 dark:text-slate-950 dark:hover:bg-emerald-400;
+    @apply disabled:hover:bg-emerald-600 dark:disabled:hover:bg-emerald-500;
+    box-shadow: 0 0 0 0 rgb(var(--accent) / 0);
+    transition: box-shadow .2s ease, background-color .15s ease;
+  }
+  .pd-btn-primary:not(:disabled):hover {
+    box-shadow: 0 0 18px -2px rgb(var(--accent) / 0.55);
+  }
+
+  .pd-btn-danger {
+    @apply border-rose-200 text-rose-600 hover:bg-rose-50;
+    @apply dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/40;
+  }
+
+  .pd-btn-xs {
+    @apply px-2 py-1 text-xs rounded-md;
+  }
+
+  .pd-input {
+    @apply w-full rounded-lg border px-3 py-2 text-sm transition-colors;
+    @apply border-slate-200 bg-white text-slate-900 placeholder:text-slate-400;
+    @apply dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-600;
+  }
+
+  .pd-label {
+    @apply block text-[13px] font-semibold text-slate-700 dark:text-slate-300 mb-1.5;
+  }
+
+  .pd-hint {
+    @apply text-xs leading-relaxed text-slate-500 dark:text-slate-400;
+  }
+
+  /* Metrics are monospace so digits align down a column and a character
+     count reads as a measurement rather than as prose. */
+  .pd-metric {
+    @apply font-mono text-xs tabular-nums text-slate-500 dark:text-slate-400;
+  }
+
+  .pd-chip {
+    @apply inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-xs;
+    @apply border-slate-200 bg-slate-50 text-slate-600;
+    @apply dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300;
+  }
+}
+
+/* ============================================================
+   Glow
+
+   The brief asks for high-tech glowing bars. The restraint that keeps
+   that from looking like a toy: glow is reserved for live state. A bar
+   that is running glows and pulses; a bar that is merely sitting at a
+   value does not. So the glow means "this is moving", which is
+   information, rather than decoration applied to every bar equally.
+   ============================================================ */
+
+@layer utilities {
+  .glow-accent {
+    box-shadow:
+      0 0 8px  rgb(var(--accent) / 0.55),
+      0 0 18px rgb(var(--accent) / 0.35),
+      inset 0 0 6px rgb(var(--accent-soft) / 0.45);
+  }
+
+  .glow-warn {
+    box-shadow:
+      0 0 8px  rgb(var(--warn) / 0.55),
+      0 0 18px rgb(var(--warn) / 0.30),
+      inset 0 0 6px rgb(var(--warn) / 0.40);
+  }
+
+  .glow-stop {
+    box-shadow:
+      0 0 8px  rgb(var(--stop) / 0.55),
+      0 0 18px rgb(var(--stop) / 0.30),
+      inset 0 0 6px rgb(var(--stop) / 0.40);
+  }
+
+  /* The travelling highlight that rides along an indeterminate bar. */
+  .sheen-mask {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(255 255 255 / 0.55),
+      transparent
+    );
+  }
+}
+
+/* Anyone who has asked their system to stop moving things gets a static
+   interface. The bars still fill and still change colour — only the
+   looping motion stops, so no information is lost. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Scrollbars, so the two scrolling columns don't ship a bright grey
+   default gutter into the dark theme. */
+@supports selector(::-webkit-scrollbar) {
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 dark:bg-slate-700;
+    border-radius: 6px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400 dark:bg-slate-600;
+    background-clip: content-box;
+  }
+}

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Parts Desk — listing builder</title>
+<meta name="description" content="Turns IT hardware part numbers into marketplace listing copy, with the sources it used.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  /* Runs before React mounts and before first paint. Without this the
+     page renders light, then snaps to dark once the app boots — the
+     flash-of-wrong-theme that every class-strategy dark mode has to
+     solve at the HTML level rather than in a component. Kept inline and
+     dependency-free for the same reason. */
+  (function () {
+    try {
+      var saved = localStorage.getItem("pd.theme");
+      var system = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      var dark = saved ? saved === "dark" : system;
+      document.documentElement.classList.toggle("dark", dark);
+    } catch (e) {
+      /* Storage blocked (private mode, embedded frame). Fall back to the
+         OS preference rather than failing to render. */
+      try {
+        document.documentElement.classList.toggle(
+          "dark",
+          window.matchMedia("(prefers-color-scheme: dark)").matches
+        );
+      } catch (e2) {}
+    }
+  })();
+</script>
+</head>
+<body class="h-full">
+<div id="root" class="h-full"></div>
+<script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
