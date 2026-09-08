@@ -127,7 +127,8 @@
   .bullet-row + .bullet-row{border-top:1px solid var(--line-soft)}
   .bullet-row .mark{color:var(--muted);font:500 13px/1.7 var(--mono);flex:none;width:18px}
   .bullet-row textarea{min-height:24px}
-  .bullet-row .len{font:500 11.5px/1.9 var(--mono);color:var(--muted);flex:none}
+  .bullet-row .len{font:500 11.5px/1.9 var(--mono);color:var(--muted);flex:none;cursor:default}
+  .bullet-row .len.over{color:var(--stop);font-weight:600}
 
   table.specs{width:100%;border-collapse:collapse;font-size:13.5px}
   table.specs td{padding:6px 0;border-bottom:1px solid var(--line-soft);vertical-align:top}
@@ -306,15 +307,37 @@
           <textarea id="s-rules" rows="5" spellcheck="false" maxlength="3000"></textarea>
           <div class="hint">Anything your listings always need: wording to avoid, a warranty line, how to phrase compatibility. A few sentences is plenty — this gets added to every single listing request, so keep it short (capped at 3,000 characters).</div>
         </div>
-        <div class="duo">
-          <div class="field">
-            <label for="s-title-max">Title limit</label>
-            <input type="number" id="s-title-max" min="60" max="500">
+        <div class="field">
+          <label>Title length (characters)</label>
+          <div class="duo">
+            <input type="number" id="s-title-min" min="0" max="500" aria-label="Title minimum characters">
+            <input type="number" id="s-title-max" min="20" max="500" aria-label="Title maximum characters">
           </div>
-          <div class="field">
-            <label for="s-desc-max">Description limit</label>
-            <input type="number" id="s-desc-max" min="200" max="5000">
+          <div class="hint">Minimum, then maximum. The maximum is a hard cap — anything over it is rewritten before you ever see it, and a listing that still can't be fitted is flagged rather than published quietly.</div>
+        </div>
+
+        <div class="field">
+          <label>Each bullet (characters)</label>
+          <div class="duo">
+            <input type="number" id="s-bullet-min" min="0" max="500" aria-label="Bullet minimum characters">
+            <input type="number" id="s-bullet-max" min="20" max="500" aria-label="Bullet maximum characters">
           </div>
+          <div class="hint">Applies to all five bullets individually, not to their total.</div>
+        </div>
+
+        <div class="field">
+          <label>Description length (characters)</label>
+          <div class="duo">
+            <input type="number" id="s-desc-min" min="0" max="6000" aria-label="Description minimum characters">
+            <input type="number" id="s-desc-max" min="100" max="6000" aria-label="Description maximum characters">
+          </div>
+          <div class="hint">A high minimum on thin search results is the one setting that can push the writing model toward padding. When there genuinely isn't enough sourced material to reach it, the app leaves the description short and flags the listing instead of inventing specifications to fill the gap.</div>
+        </div>
+
+        <div class="field">
+          <label for="s-refit">Repair passes</label>
+          <input type="number" id="s-refit" min="0" max="4">
+          <div class="hint">How many times to send an out-of-range field back to be rewritten to length. Each pass is one extra Mistral call for that listing and costs no Tavily credits. Zero turns repair off and just flags anything out of range.</div>
         </div>
         <div class="check">
           <input type="checkbox" id="s-pn-title">
@@ -375,7 +398,15 @@ const store = {
 const DEFAULTS = {
   apiKey:"", apiKeys:[], tavilyKey:"", formatModel:"mistral-small-latest",
   gapSeconds:32, retries:4, tavilyResults:6,
-  rules:"", titleMax:200, descMax:2000, pnInTitle:true, target:40
+  rules:"", pnInTitle:true, target:40,
+  // Length rules. Every one of these is enforced twice: asked for in the
+  // prompt, then measured in code after the reply comes back, with a
+  // repair call for anything out of range (see refitLengths). Language
+  // models cannot count characters, so the prompt alone is never enough.
+  titleMin:150,  titleMax:200,
+  bulletMin:120, bulletMax:150,
+  descMin:1500,  descMax:2000,
+  refitPasses:2
 };
 let settings = Object.assign({}, DEFAULTS);
 try { Object.assign(settings, JSON.parse(store.get("pd.settings") || "{}")); } catch {}
@@ -397,6 +428,26 @@ if (typeof settings.rules === "string" && settings.rules.length > RULES_MAX_CHAR
   settings.rules = settings.rules.slice(0, RULES_MAX_CHARS);
   store.set("pd.settings", JSON.stringify(settings));
 }
+
+/* The six length numbers are the spine of this app now, so they get
+   normalised on every load rather than trusted. A saved file from an
+   older version has maxes but no mins; a hand-edited one could have a
+   minimum above its maximum, which would make every listing permanently
+   unfittable and every repair pass a wasted API call. Clamp first, ask
+   questions later. */
+function normaliseLengthSettings(s){
+  const num = (v, fb) => Number.isFinite(+v) && +v > 0 ? Math.round(+v) : fb;
+  s.titleMax  = Math.min(500,  Math.max(20,  num(s.titleMax,  DEFAULTS.titleMax)));
+  s.titleMin  = Math.min(s.titleMax, Math.max(0, num(s.titleMin,  DEFAULTS.titleMin)));
+  s.bulletMax = Math.min(500,  Math.max(20,  num(s.bulletMax, DEFAULTS.bulletMax)));
+  s.bulletMin = Math.min(s.bulletMax, Math.max(0, num(s.bulletMin, DEFAULTS.bulletMin)));
+  s.descMax   = Math.min(6000, Math.max(100, num(s.descMax,   DEFAULTS.descMax)));
+  s.descMin   = Math.min(s.descMax, Math.max(0, num(s.descMin,   DEFAULTS.descMin)));
+  s.refitPasses = Math.min(4, Math.max(0, num(s.refitPasses, DEFAULTS.refitPasses)));
+  return s;
+}
+normaliseLengthSettings(settings);
+store.set("pd.settings", JSON.stringify(settings));
 
 // This app went through two earlier search mechanisms — Groq's Compound
 // systems (a live, publicly-reported bug returning generic 413s) and
@@ -516,10 +567,23 @@ try {
   }
 } catch {}
 
+/* The previous version truncated the serialised queue with .slice(), which
+   produces a string that is no longer valid JSON — so the next page load
+   silently threw on parse and lost the entire queue, not just the overflow.
+   Drop whole items from the oldest end instead, which stays parseable and
+   loses the least useful history first. */
+const ITEMS_STORAGE_BUDGET = 4000000;
+
 function persistItems(){
   try {
-    const slim = state.items.map(({id,part,status,data,error,errorRaw,errorModel,opts}) => ({id,part,status,data,error,errorRaw,errorModel,opts}));
-    store.set("pd.items", JSON.stringify(slim).slice(0, 4000000));
+    let slim = state.items.map(({id,part,status,data,error,errorRaw,errorModel,opts}) =>
+      ({id,part,status,data,error,errorRaw,errorModel,opts}));
+    let json = JSON.stringify(slim);
+    while (json.length > ITEMS_STORAGE_BUDGET && slim.length > 1){
+      slim = slim.slice(1);
+      json = JSON.stringify(slim);
+    }
+    store.set("pd.items", json);
   } catch {}
 }
 
@@ -545,6 +609,26 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 
 const API_URL = "https://api.mistral.ai/v1/chat/completions";
 const MODELS_LIST_URL = "https://api.mistral.ai/v1/models";
+
+/* No request in this app had a timeout. A connection that opens and then
+   never answers — not an error status, just silence — would hang the
+   await forever, and because the queue runs strictly in series that one
+   part number would stall the entire remaining batch with the spinner
+   still turning. Every fetch now carries a ceiling, combined with the
+   user's Stop button where there is one. */
+const REQUEST_TIMEOUT_MS = 90000;
+
+function withTimeout(signal, ms = REQUEST_TIMEOUT_MS){
+  const timer = AbortSignal.timeout ? AbortSignal.timeout(ms) : null;
+  if (!timer) return signal;
+  if (!signal) return timer;
+  if (AbortSignal.any) return AbortSignal.any([signal, timer]);
+  return signal; // very old browser: keep the user's abort, lose the timeout
+}
+
+function isTimeout(e){
+  return e?.name === "TimeoutError" || (e?.name === "AbortError" && e?.message?.includes("timed out"));
+}
 
 function readableError(status, payload){
   const msg = payload?.message || payload?.error?.message || "";
@@ -591,11 +675,12 @@ async function callMistral(model, body, { signal, onNote, apiKey }){
           "authorization": "Bearer " + apiKey
         },
         body: JSON.stringify({ model, ...body }),
-        signal
+        signal: withTimeout(signal)
       });
     } catch (e){
+      if (isTimeout(e)) throw new Error(`Mistral didn't answer within ${REQUEST_TIMEOUT_MS / 1000} seconds. Try this part number again.`);
       if (e.name === "AbortError") throw e;
-      throw new Error("Couldn't reach Mistral. Check your connection and try again.");
+      throw new Error("Couldn't reach Mistral. Check your connection and try again. If every request fails this way, the browser may be blocking it (a CORS restriction) rather than Mistral being down.");
     }
 
     try { payload = await res.json(); } catch { payload = null; }
@@ -714,7 +799,8 @@ async function callWithKeyRotation(preferred, fallbacks, body, { signal, onNote,
 /* Diagnostic: asks Mistral directly which models a key can call. */
 async function listAvailableModels(apiKey){
   const res = await fetch(MODELS_LIST_URL, {
-    headers:{ "authorization": "Bearer " + apiKey }
+    headers:{ "authorization": "Bearer " + apiKey },
+    signal: withTimeout(null, 20000)
   });
   let payload; try { payload = await res.json(); } catch { payload = null; }
   if (!res.ok) throw new Error(readableError(res.status, payload));
@@ -735,15 +821,18 @@ const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
    sources are Tavily's own structured results — never scraped or
    regex-extracted, so a listing can never cite a page Tavily didn't
    actually return. */
-async function tavilySearch(query, apiKey, maxResults){
+async function tavilySearch(query, apiKey, maxResults, signal){
   let res;
   try {
     res = await fetch(TAVILY_SEARCH_URL, {
       method:"POST",
       headers:{ "content-type":"application/json", "authorization": "Bearer " + apiKey },
-      body: JSON.stringify({ query, max_results: maxResults, search_depth:"basic" })
+      body: JSON.stringify({ query, max_results: maxResults, search_depth:"basic" }),
+      signal: withTimeout(signal)
     });
   } catch (e){
+    if (isTimeout(e)) throw new Error(`Tavily didn't answer within ${REQUEST_TIMEOUT_MS / 1000} seconds. Try this part number again.`);
+    if (e.name === "AbortError") throw e;
     // A fetch that throws before ever reaching a response (rather than
     // an HTTP error status) usually means the browser blocked the
     // request outright — most commonly CORS. Worth naming explicitly
@@ -778,8 +867,18 @@ const ACCURACY_RULES = `Accuracy matters more than completeness. This copy gets 
 - Trust manufacturer pages and official spec sheets first, then large distributors and parts specialists, then general marketplaces. Marketplace listings are weak evidence because sellers get part numbers wrong.
 - If the results are ambiguous, contradictory, or don't clearly identify the part, say so plainly in "warnings" rather than picking the most likely guess.`;
 
+/* Models aim at the number you give them and land short of it, so the
+   prompt asks for a point comfortably inside the range rather than the
+   ceiling. Landing a little under a target leaves you inside the range;
+   landing a little under a hard cap that you aimed at leaves you outside
+   it about half the time. */
+function lengthTarget(min, max){ return Math.round(min + (max - min) * 0.7); }
+
 function formatPrompt(part, opts, sources){
   const t = settings.titleMax, d = settings.descMax;
+  const tTarget = lengthTarget(settings.titleMin, settings.titleMax);
+  const bTarget = lengthTarget(settings.bulletMin, settings.bulletMax);
+  const dTarget = lengthTarget(settings.descMin, settings.descMax);
   const lines = [];
   lines.push(`You write marketplace listing copy for computer hardware part numbers, for an IT hardware reseller (Dell, HP, Lenovo, Jabra, Poly, NVIDIA, AMD, Seagate and similar makers; also panels, bezels, cables, docks, spares).`);
   lines.push("");
@@ -807,9 +906,9 @@ function formatPrompt(part, opts, sources){
 }`);
   lines.push("");
   lines.push(`Field rules:`);
-  lines.push(`- title: at most ${t} characters, counted as characters. Brand first, then model or series, then the product type, then the two to four specifications a buyer filters on.${settings.pnInTitle ? " Include the part number, since buyers search for it." : " Do not include the part number."} No pipes, no ALL CAPS words, no repeated words, no filler such as "High Quality" or "Fast Shipping".`);
-  lines.push(`- bullets: exactly five, each a complete statement under 200 characters, each opening with the concrete detail rather than a label. Cover different ground in each: what it is and where it goes; the headline specification; a second specification or physical detail; compatibility or what it replaces, only where the results support it; and condition or what is in the box. Do not restate the title.`);
-  lines.push(`- description: at most ${d} characters, counted as characters. Two to four short paragraphs of plain prose, no headings and no bullet characters. Open with the brand, model and part number so the first line works as a search snippet. Then what it does and where it fits, then the specifications, then condition and anything worth checking before ordering. Let the main search terms recur naturally two or three times across the whole text, no more.`);
+  lines.push(`- title: between ${settings.titleMin} and ${t} characters. Aim for about ${tTarget}. ${t} is a hard cap that is never exceeded. Brand first, then model or series, then the product type, then the specifications a buyer filters on — keep adding real, sourced qualifiers until the length is reached.${settings.pnInTitle ? " Include the part number, since buyers search for it." : " Do not include the part number."} No pipes, no ALL CAPS words, no repeated words, no filler such as "High Quality" or "Fast Shipping".`);
+  lines.push(`- bullets: exactly five. Each one between ${settings.bulletMin} and ${settings.bulletMax} characters, aiming for about ${bTarget} — that range applies to each bullet on its own, not to the five added together, and ${settings.bulletMax} is a hard cap. Each is a complete statement opening with the concrete detail rather than a label. Cover different ground in each: what it is and where it goes; the headline specification; a second specification or physical detail; compatibility or what it replaces, only where the results support it; and condition or what is in the box. Do not restate the title.`);
+  lines.push(`- description: between ${settings.descMin} and ${d} characters. Aim for about ${dTarget}. ${d} is a hard cap that is never exceeded. Three to five short paragraphs of plain prose, no headings and no bullet characters. Open with the brand, model and part number so the first line works as a search snippet. Then what it does and where it fits, then the specifications in full sentences, then compatibility, then condition and anything worth checking before ordering. Let the main search terms recur naturally two or three times across the whole text, no more.`);
   lines.push(`- specs: up to twelve rows taken from the search results.`);
   lines.push(`- warnings: what the operator must check before publishing — ambiguity about which product this is, disagreement between sources, thin sourcing. Empty array if the results were solid.`);
   lines.push(`- confidence: how well the search results pin this part down.`);
@@ -823,7 +922,8 @@ function formatPrompt(part, opts, sources){
     lines.push(settings.rules.trim().slice(0, RULES_MAX_CHARS));
   }
   lines.push("");
-  lines.push(`Count the characters of the title and description before answering, and shorten them if they run over.`);
+  lines.push(`On length: the ranges above are checked by machine after you answer, and anything outside them is sent back to be rewritten, so writing to length the first time saves a round trip. Reach the minimums with more real, sourced detail — further specifications, dimensions, what it replaces, what is in the box, what to verify before ordering — expressed in fuller sentences.`);
+  lines.push(`Never reach a minimum by padding. Do not repeat yourself, do not restate the title inside the description, do not add marketing filler, and above all do not invent a specification that is not in the search results below. If the results are too thin to reach a minimum honestly, write the most complete accurate version you can, leave it short, and add a warning saying the sourced material was too thin to reach the required length. A short listing is a fixable problem; a wrong one is not.`);
   lines.push("");
   lines.push(`--- SEARCH RESULTS ---`);
   if (!sources.length){
@@ -840,6 +940,162 @@ function formatPrompt(part, opts, sources){
 }
 
 /* ============================================================
+   Length enforcement
+
+   The prompt asks for the right lengths; this measures whether it got
+   them. Nothing here trusts the model to have counted anything. Every
+   listing is measured in code, and any field outside its range goes
+   back for a targeted rewrite with the exact deficit stated.
+   ============================================================ */
+
+const len = (v) => (typeof v === "string" ? v.trim().length : 0);
+
+/* Returns one entry per field that is outside its range, with enough
+   detail to both explain it to the operator and instruct a rewrite. */
+function lengthIssues(d){
+  const out = [];
+  const check = (field, label, value, min, max) => {
+    const n = len(value);
+    if (!n && !min) return;
+    if (n > max) out.push({ field, label, n, min, max, over:true,  delta:n - max });
+    else if (n < min) out.push({ field, label, n, min, max, over:false, delta:min - n });
+  };
+  check("title", "Title", d.title, settings.titleMin, settings.titleMax);
+  (d.bullets || []).forEach((b, i) =>
+    check("bullet" + i, `Bullet ${i + 1}`, b, settings.bulletMin, settings.bulletMax));
+  check("description", "Description", d.description, settings.descMin, settings.descMax);
+  return out;
+}
+
+function describeIssue(i){
+  return i.over
+    ? `${i.label} is ${i.n} characters, ${i.delta} over the ${i.max} hard cap.`
+    : `${i.label} is ${i.n} characters, ${i.delta} short of the ${i.min} minimum.`;
+}
+
+/* Rewrites every out-of-range field in a single call. Batching matters:
+   Mistral's free tier is rate-limited to a couple of requests a minute,
+   so one repair call for six offending fields is the difference between
+   a listing finishing and a batch stalling. The source material is
+   re-supplied so that lengthening has real facts to draw on rather than
+   pressure to invent them. */
+async function refitCall(d, sources, signal, onNote){
+  const issues = lengthIssues(d);
+  if (!issues.length) return d;
+
+  const lines = [];
+  lines.push(`You are fixing the length of listing copy that is otherwise correct. Rewrite only the fields listed below. Every factual claim must survive: do not drop a specification, and do not add one that is not in the search results at the end of this message.`);
+  lines.push("");
+  lines.push(`Fields to fix:`);
+  issues.forEach(i => {
+    lines.push("");
+    lines.push(`${i.label} — currently ${i.n} characters. Required: between ${i.min} and ${i.max}. Target: about ${lengthTarget(i.min, i.max)}.`);
+    if (!i.n){
+      lines.push(`This field came back empty. Write it from scratch, to length, using only the search results below.`);
+    } else {
+      lines.push(i.over
+        ? `Cut ${i.delta} or more characters. Remove repetition, filler and the least useful detail first. Keep the opening terms.`
+        : `Add at least ${i.delta} characters of real, sourced detail — further specifications, dimensions, what it replaces, what is in the box, what to check before ordering. Do not pad, do not repeat, do not invent. If there is genuinely nothing more in the sources, return it as close to the minimum as the facts honestly allow.`);
+      lines.push(`Current text:`);
+      lines.push(fieldValue(d, i.field));
+    }
+  });
+  lines.push("");
+  lines.push(`Return only JSON, with a key for each field you were asked to fix and nothing else:`);
+  lines.push(`{ ${issues.map(i => `"${i.field}": string`).join(", ")} }`);
+  lines.push("");
+  lines.push(`--- SEARCH RESULTS ---`);
+  (sources || []).forEach((s, i) => {
+    lines.push(`[${i + 1}] ${s.title}`);
+    lines.push(s.content);
+    lines.push("");
+  });
+
+  const { payload, model, apiKey } = await callWithKeyRotation(settings.formatModel, FORMAT_MODELS, {
+    messages:[{ role:"user", content: lines.join("\n") }],
+    temperature:0.3,
+    max_tokens: 2600,
+    response_format:{ type:"json_object" }
+  }, { signal, onNote, remembered: lastWorkingFormatModel });
+
+  lastWorkingFormatModel = model;
+  bumpQuota(model, payload?.usage?.total_tokens, apiKey);
+
+  const fixed = extractJson(textOf(payload).trim());
+  if (!fixed) return d;
+
+  // Only accept a rewrite that actually moved the field closer to its
+  // range. A pass that overshoots in the other direction, or comes back
+  // worse, is discarded rather than allowed to make things worse than
+  // where it started.
+  const next = { ...d, bullets:[...(d.bullets || [])] };
+  for (const i of issues){
+    const proposed = typeof fixed[i.field] === "string" ? stripWrapping(fixed[i.field]) : null;
+    if (!proposed) continue;
+    const before = distanceOutside(i.n, i.min, i.max);
+    const after = distanceOutside(proposed.trim().length, i.min, i.max);
+    if (after < before) setFieldValue(next, i.field, proposed.trim());
+  }
+  return next;
+}
+
+function distanceOutside(n, min, max){
+  return n > max ? n - max : n < min ? min - n : 0;
+}
+
+function fieldValue(d, field){
+  if (field === "title") return d.title || "";
+  if (field === "description") return d.description || "";
+  const m = /^bullet(\d+)$/.exec(field);
+  return m ? ((d.bullets || [])[+m[1]] || "") : "";
+}
+
+function setFieldValue(d, field, value){
+  if (field === "title"){ d.title = value; return; }
+  if (field === "description"){ d.description = value; return; }
+  const m = /^bullet(\d+)$/.exec(field);
+  if (m) d.bullets[+m[1]] = value;
+}
+
+/* Models like to wrap a single-field answer in quotes or a code fence
+   even when told not to. Strip that rather than let it eat characters
+   out of the budget or show up in a published title. */
+function stripWrapping(s){
+  let t = String(s).trim();
+  t = t.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "").trim();
+  if (t.length > 1 && /^["'“]/.test(t) && /["'”]$/.test(t)) t = t.slice(1, -1).trim();
+  return t;
+}
+
+async function refitLengths(data, sources, onNote, signal){
+  for (let pass = 0; pass < settings.refitPasses; pass++){
+    const issues = lengthIssues(data);
+    if (!issues.length) return data;
+    onNote?.({ text: `Fixing length on ${issues.length} field${issues.length === 1 ? "" : "s"} (pass ${pass + 1} of ${settings.refitPasses}): ${issues.map(i => i.label.toLowerCase()).join(", ")}.` });
+    const before = JSON.stringify([data.title, data.bullets, data.description]);
+    try {
+      data = await refitCall(data, sources, signal, (t) => onNote?.({ text:t }));
+    } catch (e){
+      if (e.name === "AbortError") throw e;
+      onNote?.({ text:`Couldn't run the length fix (${e.message}). Keeping what's there and flagging it.` });
+      break;
+    }
+    // A pass that changed nothing will change nothing next time either.
+    if (JSON.stringify([data.title, data.bullets, data.description]) === before) break;
+  }
+
+  const left = lengthIssues(data);
+  if (left.length){
+    data.warnings = [
+      ...(data.warnings || []),
+      ...left.map(describeIssue)
+    ];
+    onNote?.({ text:`${left.length} field${left.length === 1 ? " is" : "s are"} still outside the required range — flagged for review.` });
+  }
+  return data;
+}
+
+/* ============================================================
    The run: one Tavily search, one Mistral synthesis call
    ============================================================ */
 
@@ -849,7 +1105,7 @@ async function research(part, opts, onNote, signal){
 
   onNote({ text:"Searching for " + part });
   const query = `${part}${opts.brand ? " " + opts.brand : ""} specifications datasheet replacement part`;
-  const { sources } = await tavilySearch(query, tavilyKey, settings.tavilyResults || 6);
+  const { sources } = await tavilySearch(query, tavilyKey, settings.tavilyResults || 6, signal);
   bumpTavilyQuota();
 
   if (!sources.length){
@@ -862,7 +1118,14 @@ async function research(part, opts, onNote, signal){
   const { payload: formatted, model: usedFormatModel, apiKey: usedFormatKey } = await callWithKeyRotation(settings.formatModel, FORMAT_MODELS, {
     messages:[{ role:"user", content: formatPrompt(part, opts, sources) }],
     temperature:0.3,
-    max_tokens:1400, // a title, five bullets, description and specs fit comfortably well under this
+    // Budgeted against the length rules rather than guessed at. At the
+    // defaults the JSON body alone is a 200-char title, five 150-char
+    // bullets and a 2,000-char description — roughly 800 tokens before
+    // specs, compatibility, alternate part numbers and warnings are
+    // added. A ceiling too low here truncates the JSON mid-string and
+    // surfaces as "the listing came back unreadable", which looks like a
+    // model fault and isn't one.
+    max_tokens: 2600,
     response_format:{ type:"json_object" }
   }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingFormatModel });
 
@@ -870,8 +1133,12 @@ async function research(part, opts, onNote, signal){
   bumpQuota(usedFormatModel, formatted?.usage?.total_tokens, usedFormatKey);
 
   const raw = textOf(formatted).trim();
-  const data = extractJson(raw);
+  let data = extractJson(raw);
   if (!data) throw new Error("The listing came back unreadable. Try running this part number again.");
+
+  // Measure every length rule and repair anything outside its range
+  // before the listing is ever shown as finished.
+  data = await refitLengths(data, sources, onNote, signal);
 
   if (!sources.length){
     data.warnings = [...(data.warnings || []), "No search results were found for this part number — everything above is unverified."];
@@ -919,24 +1186,33 @@ function extractJson(text){
   return null;
 }
 
-/* A short follow-up with no search, used to trim an overlong field. */
-async function shorten(field, value, limit){
+/* A short follow-up with no search, used to bring one manually edited
+   field back inside its range — in either direction. The batch pipeline
+   uses refitCall for this; this is the button in the editor, for a field
+   the operator has since edited by hand. */
+async function refitOne(field, value, min, max, sources){
+  const n = value.trim().length;
+  const over = n > max;
+  const target = lengthTarget(min, max);
+
+  const instruction = over
+    ? `Rewrite this product listing ${field} so it is between ${min} and ${max} characters — currently ${n}, so cut at least ${n - max}. Aim for about ${target}. Cut filler, repetition and the least useful detail first. Keep every factual claim and the same opening terms. Add nothing new.`
+    : `Rewrite this product listing ${field} so it is between ${min} and ${max} characters — currently ${n}, so add at least ${min - n}. Aim for about ${target}. Lengthen only with real detail drawn from the search results below: further specifications, dimensions, what it replaces, what is in the box, what to check before ordering. Do not pad, do not repeat yourself, and do not invent a specification that is not in those results.`;
+
+  const parts = [instruction, "", `Return only the rewritten ${field}, with no preamble and no quotation marks around it.`, "", "---", value];
+  if (!over && sources?.length){
+    parts.push("", "--- SEARCH RESULTS ---");
+    sources.forEach((s, i) => parts.push(`[${i + 1}] ${s.title}`, s.content || "", ""));
+  }
+
   const { payload, model, apiKey } = await callWithKeyRotation(settings.formatModel, FORMAT_MODELS, {
-    messages:[{ role:"user", content:
-`Rewrite this product listing ${field} so it is at most ${limit} characters. It is currently ${value.length}.
-
-Keep every factual claim. Cut filler, repetition and the least useful detail first. Do not add anything new. Keep the same tone and the same opening terms.
-
-Return only the rewritten ${field}, with no preamble and no quotation marks around it.
-
----
-${value}` }],
+    messages:[{ role:"user", content: parts.join("\n") }],
     temperature:0.3,
-    max_tokens:800 // the output is meant to be shorter than the input, so this is already generous
+    max_tokens: 2000
   }, { remembered: lastWorkingFormatModel });
   lastWorkingFormatModel = model;
   bumpQuota(model, payload?.usage?.total_tokens, apiKey);
-  return textOf(payload).trim();
+  return stripWrapping(textOf(payload));
 }
 
 /* ============================================================
@@ -1066,7 +1342,13 @@ function normalise(d, part){
   const arr = (v) => Array.isArray(v) ? v : [];
   const bullets = arr(d.bullets).map(s).filter(Boolean);
   while (bullets.length < 5) bullets.push("");
-  const sources = arr(d._sources).map(x => ({ title: s(x.title), url: s(x.url) })).filter(x => x.url);
+  // A trimmed snippet is kept alongside the URL so the editor's "Fit to
+  // range" button can lengthen a hand-edited field from the same sourced
+  // material the listing was written from, rather than from nothing.
+  // Trimmed hard because this goes into localStorage for every item.
+  const sources = arr(d._sources)
+    .map(x => ({ title: s(x.title), url: s(x.url), content: s(x.content).slice(0, 700) }))
+    .filter(x => x.url);
   return {
     part_number: s(d.part_number) || part,
     brand: s(d.brand),
@@ -1092,8 +1374,7 @@ function needsReview(d){
   return !d.identified
       || d.confidence === "low"
       || d.warnings.length > 0
-      || d.title.length > settings.titleMax
-      || d.description.length > settings.descMax
+      || lengthIssues(d).length > 0
       || d.sources.length < 2;
 }
 
@@ -1116,7 +1397,17 @@ function drawQueue(){
   }
 }
 
-function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+/* Source URLs arrive from a third-party search API and are written
+   straight into an href. Anything that isn't plain http(s) — a
+   javascript: or data: URL — is dropped rather than rendered. */
+function safeUrl(u){
+  try {
+    const p = new URL(String(u), location.href);
+    return (p.protocol === "http:" || p.protocol === "https:") ? p.href : "";
+  } catch { return ""; }
+}
 
 function draw(){
   const stage = $("stage");
@@ -1136,10 +1427,19 @@ function wireRetry(item){
   const retry = $("btn-retry");
   if (!retry) return;
   retry.onclick = () => {
-    $("parts").value = item.part;
+    // Previously this wrote into the part-numbers box and called
+    // runQueue() blind. If a batch was already running, runQueue()'s
+    // first branch reads as a Stop toggle — so "Try this one again"
+    // silently killed the batch. And whatever the operator had typed
+    // into the box was overwritten either way.
+    if (state.running){ toast("A batch is running. Stop it first, or wait for it to finish."); return; }
+    const box = $("parts");
+    const previous = box.value;
+    box.value = item.part;
     $("brand").value = item.opts?.brand || "";
     $("condition").value = item.opts?.condition ?? "New";
     runQueue();
+    box.value = previous; // runQueue has already read it; give the operator their list back
   };
 
   const copyRaw = $("btn-copy-raw");
@@ -1215,7 +1515,8 @@ function resultView(item){
       <span class="mark">${i+1}</span>
       <textarea class="editable b-edit" data-i="${i}" rows="1">${esc(b)}</textarea>
       <span class="len" data-len="${i}">${b.length}</span>
-    </div>`).join("");
+    </div>`).join("") + `
+    <div class="hint" style="margin-top:8px">Each bullet: ${settings.bulletMin}–${settings.bulletMax} characters.</div>`;
 
   const specs = d.specs.length ? `
     <div class="panel">
@@ -1243,9 +1544,13 @@ function resultView(item){
       <div class="panel-head"><h3>Sources</h3></div>
       <div class="panel-body">
         ${d.queries?.length ? `<div class="queries">${d.queries.map(q => `<span class="chip">${esc(q)}</span>`).join("")}</div>` : ""}
-        ${d.sources.length ? `<ul class="sources">${d.sources.map((s,i) => `
-          <li><span class="n">${i+1}</span>
-            <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a></li>`).join("")}</ul>`
+        ${d.sources.length ? `<ul class="sources">${d.sources.map((s,i) => {
+            const href = safeUrl(s.url);
+            return `<li><span class="n">${i+1}</span>${
+              href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>`
+                   : `<span>${esc(s.title)} <span class="hint">(link dropped — not a valid web address)</span></span>`
+            }</li>`;
+          }).join("")}</ul>`
           : d.searchPerformed
             ? `<p class="hint" style="margin:0">The search ran, but no clean URLs could be pulled from its output. Treat the specs above as less certain than usual.</p>`
             : `<p class="hint" style="margin:0">No search was performed for this one. Treat everything above as unverified.</p>`}
@@ -1270,7 +1575,7 @@ function resultView(item){
       <div class="panel-head">
         <h3>Title</h3>
         <span class="count" id="c-title">0</span>
-        <button class="btn tiny" id="btn-trim-title" hidden>Shorten</button>
+        <button class="btn tiny" id="btn-trim-title" hidden>Fit to range</button>
         <button class="btn tiny" data-copy="title">Copy</button>
       </div>
       <div class="panel-body"><textarea class="editable" id="f-title" rows="2">${esc(d.title)}</textarea></div>
@@ -1285,7 +1590,7 @@ function resultView(item){
       <div class="panel-head">
         <h3>Description</h3>
         <span class="count" id="c-desc">0</span>
-        <button class="btn tiny" id="btn-trim-desc" hidden>Shorten</button>
+        <button class="btn tiny" id="btn-trim-desc" hidden>Fit to range</button>
         <button class="btn tiny" data-copy="desc">Copy</button>
       </div>
       <div class="panel-body"><textarea class="editable" id="f-desc" rows="12">${esc(d.description)}</textarea></div>
@@ -1301,36 +1606,48 @@ function wireResult(item){
   const d = item.data;
   const title = $("f-title"), desc = $("f-desc");
 
-  const syncTitle = () => {
-    d.title = title.value;
-    const n = title.value.length, over = n > settings.titleMax;
-    const c = $("c-title");
-    c.textContent = `${n} / ${settings.titleMax}`;
-    c.classList.toggle("over", over);
-    $("btn-trim-title").hidden = !over;
-    autoGrow(title);
+  /* The counter reads out of range in both directions now. Under the
+     minimum is a real failure against the brief, not a soft warning, so
+     it gets the same treatment as over the cap — the only difference in
+     wording being which end was missed. */
+  const syncRange = (el, countEl, btnEl, min, max, assign) => {
+    assign(el.value);
+    const n = el.value.trim().length;
+    const bad = n > max || n < min;
+    countEl.textContent = n > max ? `${n} / ${max} — ${n - max} over`
+                        : n < min ? `${n} / ${min} min — ${min - n} short`
+                        : `${n} · ${min}–${max}`;
+    countEl.classList.toggle("over", bad);
+    btnEl.hidden = !bad;
+    autoGrow(el);
   };
-  const syncDesc = () => {
-    d.description = desc.value;
-    const n = desc.value.length, over = n > settings.descMax;
-    const c = $("c-desc");
-    c.textContent = `${n} / ${settings.descMax}`;
-    c.classList.toggle("over", over);
-    $("btn-trim-desc").hidden = !over;
-    autoGrow(desc);
-  };
+
+  const syncTitle = () => syncRange(title, $("c-title"), $("btn-trim-title"),
+    settings.titleMin, settings.titleMax, v => { d.title = v; });
+  const syncDesc = () => syncRange(desc, $("c-desc"), $("btn-trim-desc"),
+    settings.descMin, settings.descMax, v => { d.description = v; });
 
   title.addEventListener("input", () => { syncTitle(); persistItems(); });
   desc.addEventListener("input", () => { syncDesc(); persistItems(); });
   syncTitle(); syncDesc();
 
-  document.querySelectorAll(".b-edit").forEach(el => {
+  const syncBullet = (el) => {
+    const i = +el.dataset.i;
+    const n = el.value.trim().length;
+    const tag = document.querySelector(`[data-len="${i}"]`);
+    tag.textContent = n;
+    tag.classList.toggle("over", n > settings.bulletMax || n < settings.bulletMin);
+    tag.title = n > settings.bulletMax ? `${n - settings.bulletMax} over the ${settings.bulletMax} cap`
+              : n < settings.bulletMin ? `${settings.bulletMin - n} short of the ${settings.bulletMin} minimum`
+              : `Within ${settings.bulletMin}–${settings.bulletMax}`;
     autoGrow(el);
+  };
+
+  document.querySelectorAll(".b-edit").forEach(el => {
+    syncBullet(el);
     el.addEventListener("input", () => {
-      const i = +el.dataset.i;
-      d.bullets[i] = el.value;
-      document.querySelector(`[data-len="${i}"]`).textContent = el.value.length;
-      autoGrow(el);
+      d.bullets[+el.dataset.i] = el.value;
+      syncBullet(el);
       persistItems();
     });
   });
@@ -1353,18 +1670,29 @@ function wireResult(item){
     };
   });
 
-  const trim = async (field, el, limit, sync) => {
+  const fit = async (field, el, min, max, sync) => {
     const btn = field === "title" ? $("btn-trim-title") : $("btn-trim-desc");
     const was = btn.textContent;
-    btn.textContent = "Shortening…"; btn.disabled = true;
+    btn.textContent = "Fitting…"; btn.disabled = true;
     try {
-      const out = await shorten(field, el.value, limit);
-      if (out){ el.value = out; sync(); persistItems(); toast("Shortened."); }
+      const out = await refitOne(field, el.value, min, max, d.sources);
+      // Accept only a rewrite that actually helped. Replacing a field
+      // that was 40 characters short with one that is 200 characters
+      // short would be worse than leaving it alone, and the operator
+      // would have no way of knowing that had happened.
+      const before = distanceOutside(el.value.trim().length, min, max);
+      const after = out ? distanceOutside(out.trim().length, min, max) : Infinity;
+      if (out && after < before){
+        el.value = out; sync(); persistItems();
+        toast(after === 0 ? "Fitted." : `Closer — still ${after} characters outside the range.`);
+      } else {
+        toast("The rewrite didn't land any closer to the range. Left as it was.");
+      }
     } catch (e){ toast(e.message); }
     btn.textContent = was; btn.disabled = false;
   };
-  $("btn-trim-title").onclick = () => trim("title", title, settings.titleMax, syncTitle);
-  $("btn-trim-desc").onclick  = () => trim("description", desc, settings.descMax, syncDesc);
+  $("btn-trim-title").onclick = () => fit("title", title, settings.titleMin, settings.titleMax, syncTitle);
+  $("btn-trim-desc").onclick  = () => fit("description", desc, settings.descMin, settings.descMax, syncDesc);
 }
 
 /* ============================================================
@@ -1372,7 +1700,12 @@ function wireResult(item){
    ============================================================ */
 
 function csvCell(v){
-  const s = String(v ?? "").replace(/\r?\n/g, " ");
+  let s = String(v ?? "").replace(/\r?\n/g, " ");
+  // A cell opening with = + - or @ is executed as a formula by Excel and
+  // Sheets. Listing text legitimately starts with "-" now and then, so
+  // prefix rather than strip: the value stays readable, and stops being
+  // a formula.
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
 }
 
@@ -1380,18 +1713,28 @@ function exportCsv(){
   const done = state.items.filter(i => i.data);
   if (!done.length){ toast("Nothing to export yet."); return; }
 
+  // Character counts sit next to every length-controlled field, and one
+  // summary column says whether the row is publishable as-is. Sorting or
+  // filtering on length_ok is the fastest way to find what still needs a
+  // human before it goes live.
   const head = ["part_number","brand","model","product_type","condition","confidence",
-    "title","title_chars","bullet_1","bullet_2","bullet_3","bullet_4","bullet_5",
+    "length_ok","length_notes",
+    "title","title_chars",
+    "bullet_1","bullet_1_chars","bullet_2","bullet_2_chars","bullet_3","bullet_3_chars",
+    "bullet_4","bullet_4_chars","bullet_5","bullet_5_chars",
     "description","description_chars","specs","compatibility","alternate_part_numbers",
     "warnings","sources"];
 
   const rows = done.map(i => {
     const d = i.data;
+    const issues = lengthIssues(d);
     return [
       d.part_number, d.brand, d.model, d.product_type,
       i.opts?.condition || "", d.confidence,
+      issues.length ? "NO" : "yes",
+      issues.map(describeIssue).join(" "),
       d.title, d.title.length,
-      ...[0,1,2,3,4].map(n => d.bullets[n] || ""),
+      ...[0,1,2,3,4].flatMap(n => [d.bullets[n] || "", (d.bullets[n] || "").length]),
       d.description, d.description.length,
       d.specs.map(s => `${s.label}: ${s.value}`).join(" | "),
       d.compatibility.join(" | "),
@@ -1422,8 +1765,13 @@ function openSettings(){
   $("s-gap").value = settings.gapSeconds;
   $("s-retries").value = settings.retries;
   $("s-rules").value = settings.rules;
+  $("s-title-min").value = settings.titleMin;
   $("s-title-max").value = settings.titleMax;
+  $("s-bullet-min").value = settings.bulletMin;
+  $("s-bullet-max").value = settings.bulletMax;
+  $("s-desc-min").value = settings.descMin;
   $("s-desc-max").value = settings.descMax;
+  $("s-refit").value = settings.refitPasses;
   $("s-pn-title").checked = settings.pnInTitle;
   $("s-target").value = settings.target;
   $("model-check-result").style.display = "none";
@@ -1445,13 +1793,25 @@ $("settings").addEventListener("close", () => {
   settings.gapSeconds = Math.min(60, Math.max(0, +$("s-gap").value || 0));
   settings.retries = Math.min(8, Math.max(0, +$("s-retries").value || 0));
   settings.rules = $("s-rules").value.slice(0, RULES_MAX_CHARS);
-  settings.titleMax = Math.max(60, +$("s-title-max").value || 200);
-  settings.descMax = Math.max(200, +$("s-desc-max").value || 2000);
+
+  const wanted = {
+    titleMin: +$("s-title-min").value, titleMax: +$("s-title-max").value,
+    bulletMin: +$("s-bullet-min").value, bulletMax: +$("s-bullet-max").value,
+    descMin: +$("s-desc-min").value, descMax: +$("s-desc-max").value
+  };
+  Object.assign(settings, wanted, { refitPasses: +$("s-refit").value });
+  normaliseLengthSettings(settings);
+  const clamped = Object.keys(wanted).some(k => wanted[k] !== settings[k]);
+
   settings.pnInTitle = $("s-pn-title").checked;
   settings.target = Math.max(1, +$("s-target").value || 40);
   activeKeyIndex = 0;
   saveSettings(); drawGauges(); draw();
-  toast(settings.apiKeys.length > 1 ? `Saved. ${settings.apiKeys.length} Mistral keys configured — will rotate automatically.` : "Saved.");
+  toast(clamped
+    ? "Saved, with the length limits adjusted — a minimum can't sit above its own maximum."
+    : settings.apiKeys.length > 1
+      ? `Saved. ${settings.apiKeys.length} Mistral keys configured — will rotate automatically.`
+      : "Saved.");
 });
 
 $("btn-settings").onclick = openSettings;
@@ -1502,7 +1862,9 @@ $("btn-reset-tally").onclick = () => {
 
 $("btn-wipe").onclick = () => {
   if (!confirm("Clear the API key, settings, counts and the queue from this browser?")) return;
-  ["pd.settings","pd.tally","pd.quota","pd.items"].forEach(k => store.del(k));
+  // pd.tavilyQuota was missing here, so "Clear everything" left the
+  // month's search count behind and it reappeared after the reload.
+  ["pd.settings","pd.tally","pd.quota","pd.tavilyQuota","pd.items"].forEach(k => store.del(k));
   location.reload();
 };
 
