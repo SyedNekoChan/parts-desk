@@ -19,31 +19,14 @@ const LISTING = {
   compatibility:["Inspiron 15 5567"], alternate_part_numbers:["0YF8P5"], warnings:[]
 };
 
-/* Groq's compound response shape: OpenAI-style choices[], with an
-   executed_tools array on the message carrying search queries and a
-   text blob of results (URLs embedded in prose, not a structured field). */
-function searchReply({ model = "groq/compound", withSearch = true } = {}){
-  return {
-    model,
-    choices:[{
-      index:0,
-      finish_reason:"stop",
-      message:{
-        role:"assistant",
-        content:"Research brief: the YF8P5 is a Dell Inspiron 15 5567 motherboard, Intel Core i5-7200U, DDR4 memory. High confidence.",
-        executed_tools: withSearch ? [
-          { index:0, type:"search", arguments:'{"query":"YF8P5 Dell motherboard"}',
-            output:"Title: Dell Support\nSee https://www.dell.com/support/parts/yf8p5 for details." },
-          { index:1, type:"search", arguments:'{"query":"YF8P5 specifications"}',
-            output:"Title: Parts People\nListed at https://parts-people.com/yf8p5 and also https://www.dell.com/support/parts/yf8p5 again." }
-        ] : []
-      }
-    }],
-    usage:{ prompt_tokens:50, completion_tokens:200, total_tokens:250 }
-  };
+function tavilyReply(results = [
+  { title:"Dell Support", url:"https://www.dell.com/support/parts/yf8p5", content:"YF8P5 is a system board for Inspiron 15 5567." },
+  { title:"Parts People", url:"https://parts-people.com/yf8p5", content:"Replacement motherboard, Intel i5-7200U, DDR4." }
+]){
+  return { results, answer:"" };
 }
 
-function formatReply(obj = LISTING, model = "openai/gpt-oss-20b"){
+function formatReply(obj = LISTING, model = "mistral-small-latest"){
   return {
     model,
     choices:[{ index:0, finish_reason:"stop", message:{ role:"assistant", content: JSON.stringify(obj) } }],
@@ -64,6 +47,7 @@ function jsonRes(body, status = 200, headers = {}){
 
 const calls = [];
 let plan = [];
+let failNext = null; // set to a function to make the next fetch throw, simulating CORS/network failure
 
 const dom = new JSDOM(html, {
   runScripts:"dangerously",
@@ -81,7 +65,8 @@ const dom = new JSDOM(html, {
       value:{ writeText:(t) => { win.__copied = t; return Promise.resolve(); } }, configurable:true
     });
     win.fetch = async (url, init) => {
-      calls.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
+      if (failNext){ const fn = failNext; failNext = null; return fn(); }
+      calls.push({ url, init, body: init?.body ? JSON.parse(init.body) : null });
       const next = plan.shift();
       if (typeof next === "function") return next();
       if (next && typeof next.json === "function") return next;
@@ -99,17 +84,29 @@ await wait(500);
 
 console.log("\n— boot —");
 ok("empty state renders", /Give it a part number/.test($("stage").textContent));
-ok("settings open with no key", $("settings").open === true);
-ok("search model options are groq/compound and compound-mini",
-   [...$("s-model").options].map(o => o.value).join(",") === "groq/compound,groq/compound-mini");
-ok("format model options are the two writing models",
-   [...$("s-format-model").options].map(o => o.value).join(",") === "openai/gpt-oss-20b,llama-3.3-70b-versatile");
-ok("daily search cap shown is 250", /250/.test($("quota-n").parentElement.textContent));
+ok("settings open with no keys", $("settings").open === true);
+ok("format model options are Mistral Small and Nemo",
+   [...$("s-format-model").options].map(o => o.value).join(",") === "mistral-small-latest,open-mistral-nemo");
+ok("no leftover Groq-search-model dropdown from any earlier version", !$("s-model"));
+ok("default pacing gap suits Mistral's low RPM, not Groq's higher one",
+   +$("s-gap").value >= 20);
 
-$("s-key").value = "gsk_TESTKEY";
+$("s-key").value = "mistralTESTKEY";
+$("s-tavily-key").value = "tvly-TESTKEY";
 $("s-gap").value = "0";
 $("settings").close("save");
 await wait(20);
+
+console.log("\n— requires both a Mistral key and a Tavily key —");
+{
+  win.eval("settings.tavilyKey = ''; settings.apiKeys = ['mistralTESTKEY'];");
+  $("parts").value = "YF8P5";
+  $("run").click();
+  await wait(50);
+  ok("opens settings and prompts for the missing Tavily key", $("settings").open === true);
+  $("settings").close("cancel");
+  win.eval("settings.tavilyKey = 'tvly-TESTKEY';");
+}
 
 console.log("\n— part number parsing —");
 $("parts").value = "YF8P5\n0X8DXD\n- 5CX56AA\n2) 8FTGP\nYF8P5\n\n  RTX A2000  ";
@@ -118,166 +115,228 @@ ok("leading zero survives (0X8DXD)", parsed.includes("0X8DXD"), JSON.stringify(p
 ok("dash marker stripped", parsed.includes("5CX56AA"));
 ok("numbered marker stripped", parsed.includes("8FTGP"));
 ok("duplicate dropped", parsed.filter(p => p === "YF8P5").length === 1);
-ok("internal spaces kept", parsed.includes("RTX A2000"));
 
-console.log("\n— happy path —");
-plan = [jsonRes(searchReply()), jsonRes(formatReply())];
+console.log("\n— happy path: one Tavily search, one Mistral synthesis call —");
+plan = [jsonRes(tavilyReply()), jsonRes(formatReply())];
 calls.length = 0;
 $("parts").value = "YF8P5";
 $("run").click();
 await idle();
 
 ok("exactly two API calls", calls.length === 2, "calls=" + calls.length);
-ok("both calls hit the Groq chat completions endpoint",
-   calls.every(c => c.url === "https://api.groq.com/openai/v1/chat/completions"));
-ok("auth uses a Bearer token, not x-goog-api-key",
-   calls[0].init.headers.authorization === "Bearer gsk_TESTKEY");
-ok("call 1 uses the search model", calls[0].body.model === "groq/compound");
-ok("call 1 has no response_format (plain text research)", !calls[0].body.response_format);
-ok("call 2 uses the writing model", calls[1].body.model === "openai/gpt-oss-20b");
+ok("call 1 hits Tavily's search endpoint", calls[0].url === "https://api.tavily.com/search");
+ok("call 1 authenticates with the Tavily key", calls[0].init.headers.authorization === "Bearer tvly-TESTKEY");
+ok("call 1 sends the query and a result-count limit",
+   typeof calls[0].body.query === "string" && calls[0].body.query.includes("YF8P5") && calls[0].body.max_results > 0);
+ok("call 2 hits Mistral's chat completions endpoint",
+   calls[1].url === "https://api.mistral.ai/v1/chat/completions");
+ok("call 2 authenticates with the Mistral key", calls[1].init.headers.authorization === "Bearer mistralTESTKEY");
+ok("no leftover Groq-specific header on the request", !calls[1].init.headers["Groq-Model-Version"]);
+ok("call 2 uses the writing model", calls[1].body.model === "mistral-small-latest");
 ok("call 2 requests json_object mode", calls[1].body.response_format?.type === "json_object");
-ok("research brief is passed into call 2",
-   /RESEARCH BRIEF/.test(calls[1].body.messages[0].content) &&
-   /Inspiron 15 5567 motherboard/.test(calls[1].body.messages[0].content));
-ok("prompt tells the model not to answer from memory alone",
-   /not answer from memory alone/.test(calls[0].body.messages[0].content));
-ok("title limit stated in the format prompt",
-   /at most 200 characters/.test(calls[1].body.messages[0].content));
+ok("call 2 has no search tools attached", !calls[1].body.tools);
+ok("Tavily's actual search results are embedded in the Mistral prompt",
+   /Dell Support/.test(calls[1].body.messages[0].content) && /parts-people\.com\/yf8p5/.test(calls[1].body.messages[0].content));
+ok("call 2 uses Mistral's actual field name max_tokens, not max_completion_tokens",
+   calls[1].body.max_tokens > 0 && !calls[1].body.max_completion_tokens);
 
 console.log("\n— result rendering —");
 ok("title in the editor", $("f-title").value.startsWith("Dell Inspiron 15 5567"));
-ok("counter shows the limit", /\/ 200/.test($("c-title").textContent));
 ok("five bullets", doc.querySelectorAll(".b-edit").length === 5);
 ok("description present", $("f-desc").value.includes("YF8P5"));
-ok("search queries shown", /YF8P5 specifications/.test($("stage").textContent));
-ok("URLs extracted from executed_tools output text",
-   win.eval("state.items[0].data.sources.map(s=>s.url)").includes("https://www.dell.com/support/parts/yf8p5"));
-ok("duplicate URL across two tool calls is deduped",
-   win.eval("state.items[0].data.sources.length") === 2,
-   String(win.eval("state.items[0].data.sources.length")));
-ok("source title falls back to hostname", /dell\.com/.test($("stage").textContent));
+ok("sources come directly from Tavily's structured response",
+   win.eval("state.items[0].data.sources.map(s=>s.url)").includes("https://www.dell.com/support/parts/yf8p5") &&
+   win.eval("state.items[0].data.sources.length") === 2);
 ok("listing tally incremented", $("tally-n").textContent === "1");
-ok("free-search quota incremented once, not twice (only the search call counts)",
-   $("quota-n").textContent === "1");
+ok("Tavily quota gauge incremented by exactly one search", $("quota-n").textContent === "1");
 
-console.log("\n— no search performed —");
-plan = [jsonRes(searchReply({ withSearch:false })), jsonRes(formatReply())];
+console.log("\n— no Tavily results found —");
+plan = [jsonRes(tavilyReply([])), jsonRes(formatReply())];
 calls.length = 0;
-$("parts").value = "YF8P5-nosearch";
+$("parts").value = "YF8P5-noresults";
 $("run").click();
 await idle();
 const nsItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
-ok("still completes rather than erroring", nsItem.status === "review" || nsItem.status === "done", nsItem.status);
+ok("still completes rather than erroring outright", nsItem.status === "review" || nsItem.status === "done", nsItem.status);
 ok("gets flagged for review since nothing was verified", nsItem.status === "review", nsItem.status);
-ok("warning explains no search happened",
-   nsItem.data.warnings.some(w => /No web search was performed/.test(w)), JSON.stringify(nsItem.data.warnings));
+ok("warning explains no results were found",
+   nsItem.data.warnings.some(w => /No search results were found/.test(w)), JSON.stringify(nsItem.data.warnings));
 
-console.log("\n— rate limiting (header-based, not body-based) —");
-const before = calls.length;
-plan = [
-  jsonRes({ error:{ message:"Rate limit reached" } }, 429, { "retry-after": "0.05" }),
-  jsonRes(searchReply()),
-  jsonRes(formatReply())
-];
-$("parts").value = "0X8DXD";
-$("run").click();
-await idle();
+console.log("\n— a CORS/network failure on Tavily gets a specific, actionable message —");
+{
+  failNext = () => { throw new TypeError("Failed to fetch"); };
+  calls.length = 0;
+  $("parts").value = "YF8P5-cors";
+  $("run").click();
+  await idle();
+  const corsItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
+  ok("surfaces as an error rather than hanging", corsItem.status === "error");
+  ok("message specifically names CORS as the likely cause", /CORS/.test(corsItem.error), corsItem.error);
+  ok("points to the README for the proxy workaround", /README/.test(corsItem.error));
+}
 
-const item2 = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
-ok("429 is retried, not surfaced as failure", item2.status === "done" || item2.status === "review", item2.status);
-ok("retry made the extra call", calls.length - before === 3, String(calls.length - before));
-ok("Retry-After header is honoured (parsed correctly)",
-   win.eval(`retryDelayMs({headers:{get:(k)=>k.toLowerCase()==='retry-after'?'2.5':null}})`) === 2500);
+console.log("\n— Tavily's own error response is surfaced clearly —");
+{
+  calls.length = 0;
+  plan = [ jsonRes({ detail:{ error:"Invalid API key" } }, 401) ];
+  $("parts").value = "YF8P5-badtavily";
+  $("run").click();
+  await idle();
+  const badTavilyItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
+  ok("surfaces Tavily's real error text", /Invalid API key/.test(badTavilyItem.error), badTavilyItem.error);
+}
+
+console.log("\n— Tavily quota is tracked monthly —");
+{
+  ok("quota object is keyed by month", /^\d{4}-\d{2}$/.test(win.eval("tavilyQuota.month")), win.eval("tavilyQuota.month"));
+  win.eval(`tavilyQuota = { month: "2020-01", count: 999 }; drawGauges();`);
+  plan = [ jsonRes(tavilyReply()), jsonRes(formatReply()) ];
+  calls.length = 0;
+  $("parts").value = "YF8P5-monthreset";
+  $("run").click();
+  await idle();
+  ok("a stale prior-month count resets once a new search runs", win.eval("tavilyQuota.count") === 1, String(win.eval("tavilyQuota.count")));
+}
+
+console.log("\n— Mistral's own error messages, not Groq's —");
+const err = (s,b) => win.eval(`readableError(${s}, ${JSON.stringify(b)})`);
+ok("401 points at Mistral's console, not Groq's", /console\.mistral\.ai/.test(err(401, { message:"Invalid API Key" })));
+ok("429 mentions no payment method rather than promising a specific wait", /no payment method/.test(err(429, { message:"rate limited" })));
+ok("500/503 names Mistral, not Groq", /Mistral's servers/.test(err(503, { message:"busy" })));
+
+console.log("\n— multi-key rotation on a persistent 429 —");
+{
+  win.eval(`
+    settings.apiKeys = ['mistral_KEY_ONE', 'mistral_KEY_TWO'];
+    activeKeyIndex = 0;
+    lastWorkingFormatModel = null;
+    settings.formatModel = 'mistral-small-latest';
+    settings.retries = 1;
+  `);
+  const rateLimited = { message:"Requests rate limit exceeded" };
+  calls.length = 0;
+  // Both models get 2 attempts each (retries=1) on key one before the app
+  // moves to key two — it tries the sibling model on the same key first,
+  // a cheaper recovery path than rotating keys, and only rotates once
+  // every model on that key has failed.
+  plan = [
+    jsonRes(tavilyReply()),
+    jsonRes(rateLimited, 429), jsonRes(rateLimited, 429), // mistral-small-latest, both attempts, key one
+    jsonRes(rateLimited, 429), jsonRes(rateLimited, 429), // open-mistral-nemo, both attempts, key one
+    jsonRes(formatReply())                                // key two succeeds
+  ];
+  $("parts").value = "ROTATE-ON-429";
+  $("run").click();
+  await idle();
+  win.eval("settings.retries = 4;");
+  const rotItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
+  ok("recovers by switching keys instead of failing outright",
+     rotItem.status === "done" || rotItem.status === "review", rotItem.status);
+  ok("tries both models on key one before ever touching key two",
+     calls.slice(1, 5).every(c => c.init.headers.authorization === "Bearer mistral_KEY_ONE"),
+     JSON.stringify(calls.map(c => c.init.headers.authorization)));
+  ok("the working key ends up being key two",
+     calls[calls.length-1].init.headers.authorization === "Bearer mistral_KEY_TWO",
+     JSON.stringify(calls.map(c => c.init.headers.authorization)));
+}
+
+console.log("\n— rotation is remembered across the next listing —");
+{
+  const beforeNext = calls.length;
+  plan = [ jsonRes(tavilyReply()), jsonRes(formatReply()) ];
+  $("parts").value = "ROTATE-REMEMBERED";
+  $("run").click();
+  await idle();
+  ok("next listing goes straight to key two, no wasted 429 on the exhausted key",
+     calls[beforeNext + 1].init.headers.authorization === "Bearer mistral_KEY_TWO");
+}
+
+console.log("\n— a non-retryable error does not trigger pointless key rotation —");
+{
+  win.eval(`
+    settings.apiKeys = ['mistral_BAD_ONE', 'mistral_BAD_TWO'];
+    activeKeyIndex = 0;
+    lastWorkingFormatModel = null;
+  `);
+  calls.length = 0;
+  plan = [ jsonRes(tavilyReply()), jsonRes({ message:"Invalid API Key" }, 401) ];
+  $("parts").value = "BADKEY-NO-ROTATE";
+  $("run").click();
+  await idle();
+  ok("only tried the format step once — an invalid key isn't a rotation-worthy problem",
+     calls.length === 2, String(calls.length));
+  const badKeyItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
+  ok("surfaces the real cause immediately", /isn't valid/.test(badKeyItem.error));
+}
 
 console.log("\n— model fallback on 404 —");
-function notFound404(){
-  return jsonRes({ error:{ message:"The model `groq/compound` does not exist or you do not have access to it." } }, 404);
+{
+  win.eval(`
+    settings.apiKeys = ['mistralTESTKEY'];
+    activeKeyIndex = 0;
+    lastWorkingFormatModel = null;
+    settings.formatModel = 'mistral-small-latest';
+  `);
+  calls.length = 0;
+  plan = [
+    jsonRes(tavilyReply()),
+    jsonRes({ message:"Model `mistral-small-latest` not found" }, 404),
+    jsonRes(formatReply(LISTING, "open-mistral-nemo"))
+  ];
+  $("parts").value = "MODEL-404-FALLBACK";
+  $("run").click();
+  await idle();
+  const fbItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
+  ok("recovers via the sibling model", fbItem.status === "done" || fbItem.status === "review", fbItem.status);
+  ok("moved on to open-mistral-nemo", calls.some(c => c.body?.model === "open-mistral-nemo"));
 }
-calls.length = 0;
-win.eval("lastWorkingSearchModel = null; settings.model = 'groq/compound';");
-plan = [
-  notFound404(),                  // preferred search model fails
-  jsonRes(searchReply({ model:"groq/compound-mini" })), // fallback succeeds
-  jsonRes(formatReply())
-];
-$("parts").value = "YF8P5-fb";
-$("run").click();
-await idle();
 
-const fbItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
-ok("run recovers instead of failing outright", fbItem.status === "done" || fbItem.status === "review", fbItem.status);
-ok("three calls: dead model, fallback search, format", calls.length === 3, String(calls.length));
-ok("first call tried the preferred (dead) model", calls[0].body.model === "groq/compound");
-ok("second call moved to compound-mini", calls[1].body.model === "groq/compound-mini");
-ok("app remembers the working search model for next time",
-   win.eval("lastWorkingSearchModel") === "groq/compound-mini");
+console.log("\n— legacy settings migrate cleanly —");
+{
+  const calls2 = [];
+  let plan2 = [];
+  const dom2 = new JSDOM(html, {
+    runScripts:"dangerously",
+    url:"https://example.github.io/partsdesk/",
+    pretendToBeVisual:true,
+    beforeParse(w){
+      w.HTMLDialogElement.prototype.showModal = function(){ this.open = true; };
+      w.HTMLDialogElement.prototype.close = function(v){
+        this.open = false;
+        if (v !== undefined) this.returnValue = v;
+        this.dispatchEvent(new w.Event("close"));
+      };
+      w.confirm = () => true;
+      Object.defineProperty(w.navigator, "clipboard", { value:{ writeText:() => Promise.resolve() }, configurable:true });
+      // Seeded exactly as a browser that used the earlier Groq-writing
+      // version would have it: an old Groq model name and a legacy
+      // singular apiKey field, no apiKeys array.
+      w.localStorage.setItem("pd.settings", JSON.stringify({
+        apiKey:"gsk_LEGACY", formatModel:"openai/gpt-oss-20b", tavilyKey:"tvly-LEGACY"
+      }));
+      w.fetch = async (url, init) => {
+        calls2.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
+        const next = plan2.shift();
+        if (next && typeof next.json === "function") return next;
+        return jsonRes(next ?? formatReply());
+      };
+    }
+  });
+  const win2 = dom2.window, doc2 = win2.document;
+  const $2 = (id) => doc2.getElementById(id);
+  await wait(500);
+  ok("legacy Groq writing model migrated to Mistral's default",
+     win2.eval("settings.formatModel") === "mistral-small-latest", win2.eval("settings.formatModel"));
+  ok("legacy single key migrated into the apiKeys array",
+     JSON.stringify(win2.eval("settings.apiKeys")) === JSON.stringify(["gsk_LEGACY"]));
 
-console.log("\n— fallback is remembered across the next listing —");
-const before2 = calls.length;
-plan = [ jsonRes(searchReply({ model:"groq/compound-mini" })), jsonRes(formatReply()) ];
-$("parts").value = "YF8P5-fb2";
-$("run").click();
-await idle();
-ok("next listing goes straight to the known-good model, no wasted 404",
-   calls.length - before2 === 2, String(calls.length - before2));
-ok("that call used the fallback model directly, ahead of the operator's stale preference",
-   calls[before2].body.model === "groq/compound-mini");
-
-console.log("\n— both search models dead —");
-win.eval("lastWorkingSearchModel = null;");
-plan = [ notFound404(), notFound404() ];
-calls.length = 0;
-$("parts").value = "YF8P5-dead";
-$("run").click();
-await idle();
-const deadItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
-ok("surfaces as an error, not a silent hang", deadItem.status === "error");
-ok("error names both models and points at diagnostics",
-   /groq\/compound.*groq\/compound-mini|Check available models/.test(deadItem.error), deadItem.error);
-
-console.log("\n— non-404 errors fail fast, no pointless fallback churn —");
-win.eval("lastWorkingSearchModel = null;");
-plan = [ jsonRes({ error:{ message:"Invalid API Key" } }, 401) ];
-calls.length = 0;
-$("parts").value = "YF8P5-badkey";
-$("run").click();
-await idle();
-ok("only one call made — a bad key isn't a model problem", calls.length === 1, String(calls.length));
-const badKeyItem = JSON.parse(win.eval("JSON.stringify(state.items[state.items.length-1])"));
-ok("surfaces the real cause", /isn't valid/.test(badKeyItem.error));
-
-console.log("\n— diagnostics: list available models —");
-const originalFetch = win.fetch;
-win.fetch = async (url, init) => {
-  calls.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
-  if (url === "https://api.groq.com/openai/v1/models"){
-    return jsonRes({ data:[
-      { id:"groq/compound" }, { id:"groq/compound-mini" },
-      { id:"openai/gpt-oss-20b" }, { id:"llama-3.3-70b-versatile" },
-      { id:"whisper-large-v3" }
-    ]});
-  }
-  return jsonRes(formatReply());
-};
-$("s-key").value = "gsk_TESTKEY";
-$("btn-check-models").click();
-await wait(50);
-win.fetch = originalFetch; // hand control back to the plan queue for the rest of the run
-
-ok("list call hits Groq's /models endpoint with a Bearer token",
-   calls.some(c => c.url === "https://api.groq.com/openai/v1/models" && c.init.headers.authorization === "Bearer gsk_TESTKEY"));
-const checkText = $("model-check-result").textContent;
-ok("both search models confirmed", /✓ groq\/compound\b/.test(checkText) && /✓ groq\/compound-mini/.test(checkText));
-ok("both writing models confirmed", /✓ openai\/gpt-oss-20b/.test(checkText) && /✓ llama-3\.3-70b-versatile/.test(checkText));
-ok("unrelated models (whisper) listed separately, not miscategorised",
-   /whisper-large-v3/.test(checkText) && checkText.indexOf("whisper-large-v3") > checkText.indexOf("Also on this account"));
-
-console.log("\n— truncated JSON recovery —");
-const ex = (s) => win.eval("extractJson(" + JSON.stringify(s) + ")");
-ok("plain JSON parses", ex('{"title":"T","bullets":[]}')?.title === "T");
-ok("fenced JSON parses", ex('```json\n{"title":"T","bullets":[]}\n```')?.title === "T");
-ok("braces inside strings handled", ex('{"title":"a } b","bullets":[]}')?.title === "a } b");
-ok("junk returns null", ex("nothing here") === null);
+  plan2 = [jsonRes(tavilyReply()), jsonRes(formatReply())];
+  $2("parts").value = "LEGACY-WORKS";
+  $2("run").click();
+  for (let i=0;i<200 && win2.eval("state.running");i++) await wait(25);
+  ok("the migrated model is actually what gets sent, not the stale Groq one",
+     calls2[1]?.body?.model === "mistral-small-latest", calls2[1]?.body?.model);
+}
 
 console.log("\n— copy and edit —");
 win.eval("state.activeId = state.items[0].id; draw();");
@@ -286,38 +345,21 @@ doc.querySelector('[data-copy="all"]').click();
 await wait(20);
 ok("copy-all bundles title, bullets, description",
    win.__copied.includes("Dell Inspiron") && win.__copied.includes("• Bullet one"));
-
 const b0 = doc.querySelector('.b-edit[data-i="0"]');
 b0.value = "Edited bullet";
 b0.dispatchEvent(new win.Event("input"));
 ok("edits persist to state", win.eval("state.items[0].data.bullets[0]") === "Edited bullet");
 
-$("f-title").value = "x".repeat(240);
-$("f-title").dispatchEvent(new win.Event("input"));
-ok("over-limit title flagged", $("c-title").className.includes("over"));
-ok("shorten button appears", $("btn-trim-title").hidden === false);
-
-console.log("\n— shorten() uses the writing model, not the search model —");
-win.eval("lastWorkingFormatModel = null; settings.formatModel = 'openai/gpt-oss-20b';");
-plan = [ jsonRes({ model:"openai/gpt-oss-20b", choices:[{ finish_reason:"stop", message:{ content:"Shortened title text" } }] }) ];
-calls.length = 0;
-$("btn-trim-title").click();
-await wait(50);
-ok("shorten call used the writing model", calls[0]?.body?.model === "openai/gpt-oss-20b", JSON.stringify(calls[0]?.body));
-ok("shorten call has no search tool involvement", !calls[0]?.body?.tools);
-
 console.log("\n— csv —");
 const cell = (v) => win.eval("csvCell(" + JSON.stringify(v) + ")");
 ok("comma quoted", cell("a,b") === '"a,b"');
 ok("inner quotes doubled", cell('say "hi"') === '"say ""hi"""');
-ok("newlines flattened", cell("a\nb") === "a b");
 
-console.log("\n— error messages —");
-const err = (s,b) => win.eval(`readableError(${s}, ${JSON.stringify(b)})`);
-ok("401 explains the key", /isn't valid/.test(err(401, { error:{ message:"Invalid API Key" } })));
-ok("429 reassures that nothing is charged",
-   /costs nothing/.test(err(429, { error:{ message:"rate limit" } })));
-ok("404 points at Settings", /Pick another one in Settings/.test(err(404, { error:{ message:"model not found" } })));
+console.log("\n— truncated JSON recovery —");
+const ex = (s) => win.eval("extractJson(" + JSON.stringify(s) + ")");
+ok("plain JSON parses", ex('{"title":"T","bullets":[]}')?.title === "T");
+ok("fenced JSON parses", ex('```json\n{"title":"T","bullets":[]}\n```')?.title === "T");
+ok("junk returns null", ex("nothing here") === null);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

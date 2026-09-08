@@ -261,25 +261,25 @@
       </fieldset>
 
       <fieldset>
-        <legend>Writing — Groq</legend>
+        <legend>Writing — Mistral</legend>
         <div class="field" style="margin-top:8px">
-          <textarea id="s-key" rows="3" placeholder="gsk_..." autocomplete="off" spellcheck="false" style="font:500 13.5px var(--mono)"></textarea>
-          <div class="hint">Get one free at <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> — just an email, no card at any point. One per line if you ever want a backup; this step's cost is small enough that one key is normally plenty. Stored in this browser only — never put these in the repository.</div>
+          <textarea id="s-key" rows="3" placeholder="your Mistral API key" autocomplete="off" spellcheck="false" style="font:500 13.5px var(--mono)"></textarea>
+          <div class="hint">Get one free at <a href="https://console.mistral.ai/api-keys" target="_blank" rel="noopener">console.mistral.ai/api-keys</a> — no card at any point. One per line if you ever want a backup, though this step's free allowance (~1 billion tokens/month) is large enough that one key is normally plenty. Stored in this browser only — never put these in the repository.</div>
         </div>
         <div class="callout">
-          <b>Stay on the Free tier, on both services.</b> Neither Groq nor Tavily's free tier requires a payment method — there's nothing on file to be charged on either. Don't add billing to "unlock" a paid tier on either one; that's the only way this could ever cost money.
+          <b>Stay on the Free tier, on both services.</b> Neither Mistral nor Tavily's free tier requires a payment method — there's nothing on file to be charged on either. Don't add billing to "unlock" a paid tier on either one; that's the only way this could ever cost money.
         </div>
         <div class="field" style="margin-top:14px">
           <label for="s-format-model">Writing model</label>
           <select id="s-format-model">
-            <option value="openai/gpt-oss-20b">GPT-OSS 20B — good at following the format rules (default)</option>
-            <option value="qwen/qwen3.6-27b">Qwen3.6 27B — larger, sometimes better prose</option>
+            <option value="mistral-small-latest">Mistral Small — efficient, built for high-throughput tasks like this (default)</option>
+            <option value="open-mistral-nemo">Mistral Nemo — smaller open-weight fallback</option>
           </select>
-          <div class="hint">Turns Tavily's search results into the title, bullets and description. A plain text call with no search tool attached, so its cost per listing is small and its own daily allowance (~200,000 tokens/day) is very unlikely to be what runs you short.</div>
+          <div class="hint">Turns Tavily's search results into the title, bullets and description. A plain text call with no search tool attached, so its cost per listing is small and its own free-tier allowance (~1 billion tokens/month, rate-limited to a couple of requests per minute) is very unlikely to be what runs you short.</div>
         </div>
         <div class="field">
           <button type="button" class="btn tiny" id="btn-check-models">Check available models</button>
-          <div class="hint">Asks Groq directly which models your first key can actually reach right now, rather than assuming. Useful if you're seeing a "model not found" error — Groq's free-tier lineup changes over time like every other provider's.</div>
+          <div class="hint">Asks Mistral directly which models your first key can actually reach right now, rather than assuming. Useful if you're seeing a "model not found" error — free-tier lineups change over time on every provider.</div>
           <pre id="model-check-result" class="callout" style="display:none;white-space:pre-wrap;font:500 12.5px/1.6 var(--mono);margin-top:8px"></pre>
         </div>
       </fieldset>
@@ -296,7 +296,7 @@
             <input type="number" id="s-retries" min="0" max="8">
           </div>
         </div>
-        <div class="hint" style="margin-top:-6px">Groq's free tier allows only a few requests a minute for the writing step. A gap of 2–4 seconds keeps a long batch from tripping it. When it trips anyway, the app waits as long as Groq asks and picks up where it left off.</div>
+        <div class="hint" style="margin-top:-6px">Mistral's free tier allows only a couple of requests a minute for the writing step. A gap of 30+ seconds keeps a batch from tripping it. When it trips anyway, the app waits and picks up where it left off.</div>
       </fieldset>
 
       <fieldset>
@@ -356,12 +356,10 @@
 /* ============================================================
    Parts Desk — a single-file listing builder for IT hardware.
 
-   Runs entirely in the browser against the Groq API free tier.
-   Two calls per part number:
-     1. research with Groq's built-in web search (Compound runs on GPT-OSS
-        internally, so this counts against that model's ~200,000-tokens/day
-        budget — not a separate, independent allowance)
-     2. formatting to JSON on a separate model (no search, own separate budget)
+   Runs entirely in the browser against two free APIs — Tavily for
+   search, Mistral for writing. Two calls per part number:
+     1. Tavily search — real, structured results, one credit per call
+     2. Mistral synthesis — plain text-in, JSON-out, no search tool
    ============================================================ */
 
 const $ = (id) => document.getElementById(id);
@@ -375,8 +373,8 @@ const store = {
 };
 
 const DEFAULTS = {
-  apiKey:"", apiKeys:[], tavilyKey:"", formatModel:"openai/gpt-oss-20b",
-  gapSeconds:5, retries:4, tavilyResults:6,
+  apiKey:"", apiKeys:[], tavilyKey:"", formatModel:"mistral-small-latest",
+  gapSeconds:32, retries:4, tavilyResults:6,
   rules:"", titleMax:200, descMax:2000, pnInTitle:true, target:40
 };
 let settings = Object.assign({}, DEFAULTS);
@@ -393,7 +391,7 @@ if (settings.apiKey && !settings.apiKeys.includes(settings.apiKey)){
 // A value saved before the 3,000-character cap existed (or edited by hand)
 // would otherwise sit in storage forever, uncapped, until someone happened
 // to re-open Settings and hit Save. Normalize it every time the app loads
-// instead, so a stale oversized value can't keep tripping Groq's 413.
+// instead, so a stale oversized value can't keep tripping a 413 on the writing step.
 const RULES_MAX_CHARS = 3000;
 if (typeof settings.rules === "string" && settings.rules.length > RULES_MAX_CHARS){
   settings.rules = settings.rules.slice(0, RULES_MAX_CHARS);
@@ -415,20 +413,26 @@ delete settings.model;
 
 // Groq deprecated and decommissioned llama-3.3-70b-versatile (August 16,
 // 2026). Their own recommended replacement is qwen/qwen3.6-27b.
-if (settings.formatModel === "llama-3.3-70b-versatile"){
-  settings.formatModel = "qwen/qwen3.6-27b";
+// This app moved the writing step off Groq entirely, to Mistral — no
+// change in what it does (plain synthesis, no search), just a different
+// free-tier provider (1B tokens/month, no card, corroborated by several
+// independent sources — a more generous and less ambiguous free tier
+// than Groq's for this specific job). Anyone with a Groq writing model
+// saved from before this move gets migrated automatically.
+const KNOWN_OLD_GROQ_FORMAT_MODELS = ["openai/gpt-oss-20b", "qwen/qwen3.6-27b", "llama-3.3-70b-versatile"];
+if (KNOWN_OLD_GROQ_FORMAT_MODELS.includes(settings.formatModel)){
+  settings.formatModel = DEFAULTS.formatModel;
   store.set("pd.settings", JSON.stringify(settings));
 }
 
 function saveSettings(){ store.set("pd.settings", JSON.stringify(settings)); }
 
 /* ---------- counters ----------
-   Listings are tracked on the local day. The search quota is tracked
-   on the local day too — Groq, unlike Google, doesn't publish a fixed
-   reset clock for the free tier, so this counter is this app's own
-   running total rather than a guarantee against Groq's real one. Treat
-   it as an estimate: if it says you have room left but Groq still
-   returns a 429, Groq's clock and this one have simply drifted apart. */
+   Listings finished today, and loose bookkeeping of the writing model's
+   token usage, are both tracked on the local calendar day. Tavily's
+   search quota — the one that actually matters for capacity — is
+   tracked separately, on the calendar month, since that's the cycle
+   its free tier actually resets on. */
 function localDay(){ return new Date().toLocaleDateString("en-CA"); }
 
 let tally = { date: localDay(), n: 0 };
@@ -456,13 +460,13 @@ function bumpTavilyQuota(){
   drawGauges();
 }
 
-// Groq's writing model still has its own daily token allowance
-// (~200,000/day), tracked per model + key so a rotated-to key shows its
-// own real usage rather than a misleading combined total. It's no
-// longer the header's primary gauge, since Tavily is now the one most
-// likely to bind — but it's kept for the pre-flight batch warning.
+// The writing model's free-tier allowance (Mistral: ~1B tokens/month) is
+// large enough relative to this app's actual usage that it isn't worth
+// a ceiling-based gauge the way Tavily's tighter monthly search count
+// is. Real usage is still tracked per model + key, so a rotated-to key
+// shows its own history rather than a misleading combined total — kept
+// mainly as bookkeeping and for diagnosing anything unexpected.
 function quotaKey(model, apiKey){ return model + "::" + (apiKey || "").slice(-6); }
-const WRITING_TPD_ESTIMATE = 200000;
 
 let quota = { date: localDay(), tokensByModel: {} };
 try {
@@ -489,7 +493,7 @@ function bumpTally(){
   tally.n++; store.set("pd.tally", JSON.stringify(tally)); drawGauges();
 }
 // Call with the model and key that actually served the response, and the
-// real token cost Groq reported for it.
+// real token cost Mistral reported for it.
 function bumpQuota(model, tokensUsed, apiKey){
   if (quota.date !== localDay()) quota = { date: localDay(), tokensByModel: {} };
   if (model && tokensUsed){
@@ -536,63 +540,35 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 });
 
 /* ============================================================
-   Groq API — OpenAI-compatible Chat Completions, plus Groq's
-   built-in "compound" web search tool.
+   Mistral API — OpenAI-compatible Chat Completions
    ============================================================ */
 
-const API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODELS_LIST_URL = "https://api.groq.com/openai/v1/models";
+const API_URL = "https://api.mistral.ai/v1/chat/completions";
+const MODELS_LIST_URL = "https://api.mistral.ai/v1/models";
 
 function readableError(status, payload){
-  const msg = payload?.error?.message || "";
+  const msg = payload?.message || payload?.error?.message || "";
   if (status === 401)
-    return "That API key isn't valid. Check it in Settings, or make a new one at console.groq.com/keys.";
+    return "That API key isn't valid. Check it in Settings, or make a new one at console.mistral.ai/api-keys.";
   if (status === 403)
     return "The key was refused for this request. " + msg;
   if (status === 429)
-    return "Free tier limit reached. This costs nothing — a Free-tier key has no payment method to charge, so it just waits. Try again shortly, or in a bit longer if it's the daily cap rather than the per-minute one.";
+    return "Free tier limit reached — either the per-minute cap or the monthly token allowance. This costs nothing; a Free-tier key has no payment method to charge, so it just waits or, if you've added a backup key, switches to it.";
   if (status === 503 || status === 500)
-    return "Groq's servers are busy. Trying again in a moment usually clears it.";
+    return "Mistral's servers are busy. Trying again in a moment usually clears it.";
   if (status === 404)
     return "That model name wasn't found. Pick another one in Settings.";
   if (status === 413)
-    return `Groq rejected this request as too large${msg ? ` — Groq's exact wording: "${msg}"` : ", with no further detail in the response"}. The app tries an alternate model automatically before giving up.`;
-  if (status === 400 && payload?.error?.code === "json_validate_failed")
-    return "The model produced a malformed response — a known, reported reliability quirk in these models rather than a problem with the request. The app retries automatically; this message means it kept happening even after retrying.";
+    return `The request was too large${msg ? ` — Mistral's exact wording: "${msg}"` : ", with no further detail in the response"}. The app tries an alternate model automatically before giving up.`;
   return `API error ${status}. ${msg}`;
 }
 
-/* Groq (like other OpenAI-style APIs) sends a Retry-After header on 429s
-   rather than a field in the JSON body — read the header first. */
-/* Groq's rate-limit messages carry the real recommended wait inside the
-   message text itself — e.g. "Please try again in 9m38.016s" — not
-   reliably in a Retry-After header. Parsing the header alone meant this
-   app was guessing blindly every time, which is why retries could keep
-   escalating (4s, 8s, 16s...) without ever converging on what Groq
-   actually wanted. This reads the real number wherever it's stated. */
-function parseRetrySeconds(msg){
-  if (!msg) return 0;
-  const m = msg.match(/try again in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?/i);
-  if (!m) return 0;
-  const [, h, min, s] = m;
-  const total = (parseInt(h) || 0) * 3600 + (parseInt(min) || 0) * 60 + (parseFloat(s) || 0);
-  return total > 0 ? total : 0;
-}
-
-/* Groq enforces requests/tokens per minute AND per day on the same
-   endpoint, and phrases both as "Rate limit reached ... on X per
-   minute/day". A per-minute limit is worth waiting out. A per-day limit
-   (RPD/TPD) will not clear for hours and has no exact published reset
-   clock — retrying it with short backoff just repeats the same failure
-   until the retry budget runs out, which is exactly what "continuous
-   rate limiting" looks like from the outside. */
-function isDailyLimit(msg){
-  return /\bper day\b|\bRPD\b|\bTPD\b/i.test(msg || "");
-}
-
-function retryDelayMs(res, payload){
-  const fromMessage = parseRetrySeconds(payload?.error?.message);
-  if (fromMessage) return Math.ceil(fromMessage * 1000);
+/* Mistral, like most OpenAI-style APIs, can send a Retry-After header on
+   429s. Its rate-limit message wording isn't independently confirmed the
+   way Groq's was (verified against real reported errors during that
+   provider's use), so this doesn't attempt to parse a recommended wait
+   out of the message text — just the header, then a standard backoff. */
+function retryDelayMs(res){
   const h = res?.headers?.get?.("retry-after");
   if (h){
     const n = parseFloat(h);
@@ -601,7 +577,7 @@ function retryDelayMs(res, payload){
   return 0;
 }
 
-async function callGroq(model, body, { signal, onNote, apiKey }){
+async function callMistral(model, body, { signal, onNote, apiKey }){
   const attempts = Math.max(0, settings.retries) + 1;
   let lastErr = null;
 
@@ -612,105 +588,72 @@ async function callGroq(model, body, { signal, onNote, apiKey }){
         method:"POST",
         headers:{
           "content-type":"application/json",
-          "authorization": "Bearer " + apiKey,
-          // Every Groq doc example for compound_custom pairs it with this
-          // header. Kept on all requests regardless, since it's harmless
-          // even for calls that don't use compound_custom.
-          "Groq-Model-Version": "latest"
+          "authorization": "Bearer " + apiKey
         },
         body: JSON.stringify({ model, ...body }),
         signal
       });
     } catch (e){
       if (e.name === "AbortError") throw e;
-      throw new Error("Couldn't reach Groq. Check your connection and try again.");
+      throw new Error("Couldn't reach Mistral. Check your connection and try again.");
     }
 
     try { payload = await res.json(); } catch { payload = null; }
 
     if (res.ok) return payload;
 
-    // 404 here means the model name itself is unavailable — retiring,
-    // renamed, or a lineup change — not something a retry will fix.
-    const isDaily429 = res.status === 429 && isDailyLimit(payload?.error?.message);
-    // Daily limits (RPD/TPD) turn out to behave as a rolling window that
-    // frees up gradually, not a hard reset at midnight — Groq's own
-    // message gives the real wait ("try again in 5m7s"), and that can be
-    // short. Only treat it as a dead end if the wait is long enough that
-    // sitting through it in a browser tab isn't reasonable, or if no
-    // wait time was given at all and we'd otherwise be guessing blind.
-    const DAILY_WAIT_CEILING_SEC = 1800; // 30 minutes — real observed waits so far (5m, 26m) both fall under this
-    const dailyWaitSec = isDaily429 ? parseRetrySeconds(payload?.error?.message) : 0;
-    const daily = isDaily429 && !(dailyWaitSec > 0 && dailyWaitSec <= DAILY_WAIT_CEILING_SEC);
-    // GPT-OSS models have a known, reported quirk where they occasionally
-    // produce a malformed generation that fails Groq's own internal JSON
-    // validation — code "json_validate_failed", generally with an empty
-    // failed_generation field. This looks stochastic (a bad sample on
-    // that one attempt) rather than anything about the specific prompt,
-    // so it's usually worth just trying again.
-    const jsonGlitch = res.status === 400 && payload?.error?.code === "json_validate_failed";
-    const shortDailyWait = isDaily429 && !daily;
-    const retryable = (res.status === 429 && !isDaily429) || shortDailyWait || res.status === 503 || res.status === 500 || jsonGlitch;
-    lastErr = new Error(daily ? readableDailyLimitError(model, payload) : readableError(res.status, payload));
+    // 404 means the model itself is gone — retiring, renamed, or a
+    // lineup change — not something a retry will fix. 429/503/500 are
+    // worth retrying with backoff; if a 429 still hasn't cleared once
+    // retries are exhausted, that's treated as quota-exceeded for this
+    // key, worth trying the next configured key rather than failing
+    // outright (see callWithKeyRotation).
+    const quotaExceeded = res.status === 429;
+    const retryable = res.status === 429 || res.status === 503 || res.status === 500;
+    lastErr = new Error(readableError(res.status, payload));
     lastErr._status = res.status;
-    lastErr._daily = daily;
-    lastErr._jsonGlitch = jsonGlitch;
+    lastErr._daily = false; // set true below only once retries are exhausted on a 429
     lastErr._model = model;
     lastErr._raw = payload; // the actual, unedited response — shown verbatim in the UI so a misdiagnosis on our end is visible and fixable
-    if (!retryable || attempt === attempts - 1) throw lastErr;
+    if (!retryable || attempt === attempts - 1){
+      lastErr._daily = quotaExceeded;
+      throw lastErr;
+    }
 
-    // A rate limit needs the real recommended wait. A stochastic
-    // generation glitch doesn't — it isn't a clock being enforced, so a
-    // short pause before trying again is enough, not an escalating one.
-    const wait = jsonGlitch ? 1500 : (retryDelayMs(res, payload) || Math.min(60000, 4000 * Math.pow(2, attempt)));
+    const wait = retryDelayMs(res) || Math.min(60000, 4000 * Math.pow(2, attempt));
     const waitLabel = wait >= 60000 ? `${Math.round(wait/60000)} minute${Math.round(wait/60000) === 1 ? "" : "s"}` : `${Math.round(wait/1000)}s`;
-    onNote?.(jsonGlitch
-      ? "That attempt produced a malformed response. Trying again."
-      : shortDailyWait
-        ? `Today's token allowance needs time to free back up — waiting ${waitLabel}, then trying again automatically. This tab can stay open in the background; no need to watch it.`
-        : `Rate limited. Waiting ${waitLabel}, then carrying on.`);
+    onNote?.(`Rate limited. Waiting ${waitLabel}, then carrying on.`);
     await sleep(wait, signal);
   }
   throw lastErr;
 }
 
-function readableDailyLimitError(model, payload){
-  const msg = payload?.error?.message || "";
-  const waitSec = parseRetrySeconds(msg);
-  let resetsIn = "";
-  if (waitSec > 0){
-    const mins = Math.round(waitSec / 60);
-    resetsIn = mins < 60
-      ? ` It should reset in roughly ${mins} minute${mins === 1 ? "" : "s"}.`
-      : ` It should reset in roughly ${Math.round(waitSec / 3600)} hour${Math.round(waitSec / 3600) === 1 ? "" : "s"}.`;
-  }
-  return `${model} has hit its free-tier daily limit, and the wait to clear it is too long to sit through here.${resetsIn} This is separate from the in-app usage counter. Try again later, or switch to a different Groq account's key for the rest of today.`;
-}
 
 /* Free-tier model lineups shift over time on every provider. Try the
    operator's chosen model, then whichever one last worked in this tab,
    then fall back through the given alternates, and only fail once every
    option is exhausted. */
-const FORMAT_MODELS = ["openai/gpt-oss-20b", "qwen/qwen3.6-27b"];
+const FORMAT_MODELS = ["mistral-small-latest", "open-mistral-nemo"];
 let lastWorkingFormatModel = null;
 
-async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, remembered, apiKey }){
+async function callMistralAuto(preferred, fallbacks, body, { signal, onNote, remembered, apiKey }){
   const candidates = [...new Set([remembered, preferred, ...fallbacks].filter(Boolean))];
   const tried = [];
   let lastErr = null;
 
   for (const model of candidates){
     try {
-      const payload = await callGroq(model, body, { signal, onNote, apiKey });
+      const payload = await callMistral(model, body, { signal, onNote, apiKey });
       if (model !== preferred) onNote?.(`Using ${model} for this one — ${tried[0] || preferred} wasn't available just now.`);
       return { payload, model };
     } catch (e){
       if (e.name === "AbortError") throw e;
       tried.push(model);
-      // 404 means the model itself is gone. 413 and a daily 429 both mean
-      // this specific model won't take the request right now for reasons
-      // that might not apply to its sibling — worth trying before giving up.
-      if (e._status === 404 || e._status === 413 || e._daily || e._jsonGlitch){ lastErr = e; continue; }
+      // 404 means the model itself is gone. A 429 that survived every
+      // retry means this key's quota is exhausted for this model right
+      // now — its sibling might still have room, worth trying before
+      // giving up on the key entirely.
+      if (e._status === 404 || e._status === 413 || e._daily){ lastErr = e; continue; }
       throw e;
     }
   }
@@ -718,13 +661,11 @@ async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, rememb
   const daily = lastErr?._daily;
   const finalErr = new Error(
     daily
-      ? `Both ${tried.join(" and ")} have hit their free-tier daily limit on this key.`
-      : lastErr?._jsonGlitch
-        ? `Both ${tried.join(" and ")} kept producing a malformed response for this part number, even after retrying each. This is a known reliability quirk in these models, not anything wrong with the part number — running it again on its own often works.`
-        : lastErr?._status === 413
-          ? `Both ${tried.join(" and ")} rejected this request as too large (413). See the raw response below — that's Groq's exact wording, not our guess at what it means, since a request this small shouldn't normally hit a real size limit.`
-          : `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
-            `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
+      ? `Both ${tried.join(" and ")} have hit a rate or quota limit on this key that didn't clear after retrying.`
+      : lastErr?._status === 413
+        ? `Both ${tried.join(" and ")} rejected this request as too large (413). See the raw response below — Mistral's exact wording, not our guess at what it means, since a request this small shouldn't normally hit a real size limit.`
+        : `None of these models (${tried.join(", ")}) are answering for this key right now. ` +
+          `Open Settings and use "Check available models" to see what your key can actually reach — free-tier lineups change over time on every provider.`
   );
   finalErr._status = lastErr?._status;
   finalErr._daily = daily;
@@ -736,10 +677,10 @@ async function callGroqAuto(preferred, fallbacks, body, { signal, onNote, rememb
 /* Every configured key is its own free-tier organization with its own
    daily allowance. Rather than sit through a genuinely long daily-limit
    wait on one key, this tries the next configured key first — a fresh
-   free account is a real, zero-cost way to keep going today rather than
-   waiting. Only a daily-limit failure triggers rotation: a bad key, a
-   missing model, or anything else would fail identically on every key,
-   so there's no point trying them all. */
+   free account is a real, zero-cost way to keep going rather than
+   waiting. Only a persistent rate/quota failure triggers rotation: a bad
+   key, a missing model, or anything else would fail identically on
+   every key, so there's no point trying them all. */
 let activeKeyIndex = 0;
 
 async function callWithKeyRotation(preferred, fallbacks, body, { signal, onNote, remembered }){
@@ -752,25 +693,25 @@ async function callWithKeyRotation(preferred, fallbacks, body, { signal, onNote,
 
   for (const idx of order){
     try {
-      const result = await callGroqAuto(preferred, fallbacks, body, { signal, onNote, remembered, apiKey: keys[idx] });
+      const result = await callMistralAuto(preferred, fallbacks, body, { signal, onNote, remembered, apiKey: keys[idx] });
       activeKeyIndex = idx;
       return { ...result, apiKey: keys[idx], keyIndex: idx };
     } catch (e){
       if (e.name === "AbortError") throw e;
-      if (!e._daily) throw e; // rotating keys only helps for a daily-limit failure
+      if (!e._daily) throw e; // rotating keys only helps for a persistent rate/quota failure
       lastErr = e;
-      if (keys.length > 1) onNote?.(`Key ${idx + 1} of ${keys.length} has hit today's limit — switching to the next one instead of waiting.`);
+      if (keys.length > 1) onNote?.(`Key ${idx + 1} of ${keys.length} is rate- or quota-limited right now — switching to the next one instead of waiting.`);
     }
   }
 
   throw new Error(
     keys.length > 1
-      ? `All ${keys.length} configured keys have hit today's daily limit. Try again tomorrow, or add another free Groq account's key in Settings.`
-      : `${lastErr?.message || "Today's daily limit has been reached."} Add a second free Groq account's key in Settings to keep going today instead of waiting — Groq's daily limit is per account, so a second key gets its own fresh allowance.`
+      ? `All ${keys.length} configured keys are rate- or quota-limited right now. Try again shortly, or add another free Mistral account's key in Settings.`
+      : `${lastErr?.message || "A rate or quota limit has been reached."} Add a second free Mistral account's key in Settings to keep going instead of waiting — Mistral's allowance is per account, so a second key gets its own fresh one.`
   );
 }
 
-/* Diagnostic: asks Groq directly which models a key can call. */
+/* Diagnostic: asks Mistral directly which models a key can call. */
 async function listAvailableModels(apiKey){
   const res = await fetch(MODELS_LIST_URL, {
     headers:{ "authorization": "Bearer " + apiKey }
@@ -899,7 +840,7 @@ function formatPrompt(part, opts, sources){
 }
 
 /* ============================================================
-   The run: one Tavily search, one Groq synthesis call
+   The run: one Tavily search, one Mistral synthesis call
    ============================================================ */
 
 async function research(part, opts, onNote, signal){
@@ -921,7 +862,7 @@ async function research(part, opts, onNote, signal){
   const { payload: formatted, model: usedFormatModel, apiKey: usedFormatKey } = await callWithKeyRotation(settings.formatModel, FORMAT_MODELS, {
     messages:[{ role:"user", content: formatPrompt(part, opts, sources) }],
     temperature:0.3,
-    max_completion_tokens:1400, // a title, five bullets, description and specs fit comfortably well under this
+    max_tokens:1400, // a title, five bullets, description and specs fit comfortably well under this
     response_format:{ type:"json_object" }
   }, { signal, onNote: (t) => onNote({ text:t }), remembered: lastWorkingFormatModel });
 
@@ -991,7 +932,7 @@ Return only the rewritten ${field}, with no preamble and no quotation marks arou
 ---
 ${value}` }],
     temperature:0.3,
-    max_completion_tokens:800 // the output is meant to be shorter than the input, so this is already generous
+    max_tokens:800 // the output is meant to be shorter than the input, so this is already generous
   }, { remembered: lastWorkingFormatModel });
   lastWorkingFormatModel = model;
   bumpQuota(model, payload?.usage?.total_tokens, apiKey);
@@ -1021,7 +962,7 @@ function parsePartNumbers(raw){
    A single line over ~40 characters is essentially never a real part
    number — it's almost always a paragraph or a whole pasted block that
    landed on one line, and sending that straight into a prompt is exactly
-   what trips Groq's "413 Request Entity Too Large" response. */
+   what trips a "413 Request Entity Too Large" response from a writing API. */
 function oversizedPartCount(raw){
   return raw.split(/[\n,;]+/)
     .map(s => s.trim().replace(/^(?:[-*•]|\d{1,3}[.)])\s+/, "").trim())
@@ -1035,7 +976,7 @@ async function runQueue(){
 
   if (!(settings.apiKeys || []).filter(Boolean).length){
     openSettings();
-    toast("Add your free Groq key to get started.");
+    toast("Add your free Mistral key to get started.");
     return;
   }
   if (!(settings.tavilyKey || "").trim()){
@@ -1211,9 +1152,9 @@ function wireRetry(item){
 function emptyView(){
   return `<div class="empty">
     <h1>Give it a part number.</h1>
-    <p>It searches the web with Tavily, then has Groq turn the results into a title, five bullets and a description — with the sources it used, so you can spot-check anything that matters.</p>
+    <p>It searches the web with Tavily, then has Mistral turn the results into a title, five bullets and a description — with the sources it used, so you can spot-check anything that matters.</p>
     <ol>
-      <li>Get a free key at <a href="https://tavily.com" target="_blank" rel="noopener">tavily.com</a> (search) and another at <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> (writing), and paste both into <b>Settings</b>.</li>
+      <li>Get a free key at <a href="https://tavily.com" target="_blank" rel="noopener">tavily.com</a> (search) and another at <a href="https://console.mistral.ai/api-keys" target="_blank" rel="noopener">console.mistral.ai/api-keys</a> (writing), and paste both into <b>Settings</b>.</li>
       <li>Paste your part numbers, one per line — <code>YF8P5</code>, <code>0X8DXD</code>.</li>
       <li>Press <b>Build listings</b> and let the batch run.</li>
     </ol>
@@ -1237,10 +1178,10 @@ function errorView(item){
   const raw = item.errorRaw ? `
     <details class="panel" style="margin-top:14px">
       <summary style="cursor:pointer;padding:9px 13px;font-size:13px;font-weight:600">
-        Raw response from Groq${item.errorModel ? ` (model: ${esc(item.errorModel)})` : ""}
+        Raw response from Mistral${item.errorModel ? ` (model: ${esc(item.errorModel)})` : ""}
       </summary>
       <div class="panel-body">
-        <p class="hint" style="margin:0 0 8px">This is exactly what Groq sent back, unedited — worth sharing verbatim if you're reporting a problem.</p>
+        <p class="hint" style="margin:0 0 8px">This is exactly what Mistral sent back, unedited — worth sharing verbatim if you're reporting a problem.</p>
         <pre id="raw-error-text" style="white-space:pre-wrap;font:500 12px/1.5 var(--mono);margin:0">${esc(item.errorRaw)}</pre>
         <button class="btn tiny" id="btn-copy-raw" style="margin-top:8px">Copy raw response</button>
       </div>
@@ -1510,7 +1451,7 @@ $("settings").addEventListener("close", () => {
   settings.target = Math.max(1, +$("s-target").value || 40);
   activeKeyIndex = 0;
   saveSettings(); drawGauges(); draw();
-  toast(settings.apiKeys.length > 1 ? `Saved. ${settings.apiKeys.length} Groq keys configured — will rotate automatically.` : "Saved.");
+  toast(settings.apiKeys.length > 1 ? `Saved. ${settings.apiKeys.length} Mistral keys configured — will rotate automatically.` : "Saved.");
 });
 
 $("btn-settings").onclick = openSettings;
@@ -1523,7 +1464,7 @@ $("btn-check-models").onclick = async () => {
 
   btn.disabled = true; btn.textContent = "Checking…";
   out.style.display = "block";
-  out.textContent = keys.length > 1 ? `Asking Groq (checking key 1 of ${keys.length})…` : "Asking Groq…";
+  out.textContent = keys.length > 1 ? `Asking Mistral (checking key 1 of ${keys.length})…` : "Asking Mistral…";
   try {
     const models = await listAvailableModels(keys[0]);
     if (!models.length){
