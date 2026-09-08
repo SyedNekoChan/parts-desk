@@ -259,6 +259,13 @@
           <input type="number" id="s-tavily-results" min="3" max="10">
           <div class="hint">How many pages Tavily returns per part number. More gives the writing model more to work with, at no extra cost against your monthly search count — each search is 1 credit regardless of how many results come back.</div>
         </div>
+        <div class="field">
+          <label for="s-cache-days">Keep saved searches for (days)</label>
+          <input type="number" id="s-cache-days" min="0" max="365">
+          <div class="hint">Search results are saved per part number, so a re-run or a part a colleague already looked up costs no credit. Older than this and the part is searched fresh. Zero turns saving off entirely, which means every run spends a credit.</div>
+          <button type="button" class="btn tiny" id="btn-clear-cache" style="margin-top:8px">Clear saved searches</button>
+          <span class="hint" id="cache-count" style="display:inline;margin-left:8px"></span>
+        </div>
       </fieldset>
 
       <fieldset>
@@ -399,6 +406,7 @@ const DEFAULTS = {
   apiKey:"", apiKeys:[], tavilyKey:"", formatModel:"mistral-small-latest",
   gapSeconds:32, retries:4, tavilyResults:6,
   rules:"", pnInTitle:true, target:40,
+  cacheDays:30,
   // Length rules. Every one of these is enforced twice: asked for in the
   // prompt, then measured in code after the reply comes back, with a
   // repair call for anything out of range (see refitLengths). Language
@@ -444,6 +452,7 @@ function normaliseLengthSettings(s){
   s.descMax   = Math.min(6000, Math.max(100, num(s.descMax,   DEFAULTS.descMax)));
   s.descMin   = Math.min(s.descMax, Math.max(0, num(s.descMin,   DEFAULTS.descMin)));
   s.refitPasses = Math.min(4, Math.max(0, num(s.refitPasses, DEFAULTS.refitPasses)));
+  s.cacheDays = Math.min(365, Math.max(0, num(s.cacheDays, DEFAULTS.cacheDays)));
   return s;
 }
 normaliseLengthSettings(settings);
@@ -553,6 +562,78 @@ function bumpQuota(model, tokensUsed, apiKey){
   }
   store.set("pd.quota", JSON.stringify(quota));
 }
+
+/* ---------- saved searches ----------
+   Tavily's 1,000/month is the ceiling that actually binds this app, and
+   a credit was previously spent every single time a part number ran —
+   including a retry that only ever needed the writing redone, and
+   including a part a colleague on the same key had already looked up
+   an hour earlier. Search results are now kept, keyed by the part
+   number and the inputs that would change what gets asked. A cache hit
+   costs nothing and takes no time.
+
+   Deliberately not cached: a search that came back with zero sources.
+   Storing that would make the retry button useless in exactly the case
+   where re-searching is the whole point. */
+const SEARCH_CACHE_KEY = "pd.searchCache";
+const SEARCH_CACHE_BUDGET = 2500000;
+
+let searchCache = {};
+try {
+  const c = JSON.parse(store.get(SEARCH_CACHE_KEY) || "{}");
+  if (c && typeof c === "object") searchCache = c;
+} catch {}
+
+function searchCacheKey(part, opts, maxResults){
+  // Condition never changes what gets searched for — only what the
+  // writing step is told to state — so it stays out of the key.
+  return [
+    String(part).trim().toUpperCase(),
+    String(opts?.brand || "").trim().toUpperCase(),
+    maxResults
+  ].join("|");
+}
+
+function persistSearchCache(){
+  try {
+    let json = JSON.stringify(searchCache);
+    while (json.length > SEARCH_CACHE_BUDGET){
+      const keys = Object.keys(searchCache);
+      if (keys.length <= 1) break;
+      let oldest = keys[0];
+      for (const k of keys) if ((searchCache[k]?.at || 0) < (searchCache[oldest]?.at || 0)) oldest = k;
+      delete searchCache[oldest];
+      json = JSON.stringify(searchCache);
+    }
+    store.set(SEARCH_CACHE_KEY, json);
+  } catch {}
+}
+
+function searchCacheGet(key){
+  // 0 means off. Without this, a just-written entry has an age of
+  // roughly zero days, which is not *greater* than the zero-day limit,
+  // so it would sail through the expiry check and be reused — the exact
+  // opposite of what the setting says it does.
+  if (!settings.cacheDays) return null;
+  const hit = searchCache[key];
+  if (!hit || !Array.isArray(hit.sources) || !hit.sources.length) return null;
+  const ageDays = (Date.now() - (hit.at || 0)) / 86400000;
+  if (ageDays > settings.cacheDays){
+    delete searchCache[key];
+    persistSearchCache();
+    return null;
+  }
+  return hit;
+}
+
+function searchCachePut(key, query, sources){
+  if (!settings.cacheDays) return;
+  if (!sources.length) return; // see note above
+  searchCache[key] = { at: Date.now(), query, sources };
+  persistSearchCache();
+}
+
+function searchCacheCount(){ return Object.keys(searchCache).length; }
 
 /* ---------- app state ---------- */
 const state = { items:[], activeId:null, running:false, abort:null };
@@ -1099,14 +1180,27 @@ async function refitLengths(data, sources, onNote, signal){
    The run: one Tavily search, one Mistral synthesis call
    ============================================================ */
 
-async function research(part, opts, onNote, signal){
+async function research(part, opts, onNote, signal, { forceFresh = false } = {}){
   const tavilyKey = (settings.tavilyKey || "").trim();
-  if (!tavilyKey) throw new Error("No Tavily key configured. Add one in Settings.");
-
-  onNote({ text:"Searching for " + part });
+  const maxResults = settings.tavilyResults || 6;
+  const key = searchCacheKey(part, opts, maxResults);
   const query = `${part}${opts.brand ? " " + opts.brand : ""} specifications datasheet replacement part`;
-  const { sources } = await tavilySearch(query, tavilyKey, settings.tavilyResults || 6, signal);
-  bumpTavilyQuota();
+
+  let sources, fromCache = false;
+  const hit = forceFresh ? null : searchCacheGet(key);
+
+  if (hit){
+    sources = hit.sources;
+    fromCache = true;
+    const when = new Date(hit.at).toLocaleDateString();
+    onNote({ text:`Reusing the search saved on ${when} — no Tavily credit spent.` });
+  } else {
+    if (!tavilyKey) throw new Error("No Tavily key configured. Add one in Settings.");
+    onNote({ text:"Searching for " + part });
+    ({ sources } = await tavilySearch(query, tavilyKey, maxResults, signal));
+    bumpTavilyQuota();
+    searchCachePut(key, query, sources);
+  }
 
   if (!sources.length){
     onNote({ text:"No search results came back for this one — treat the result as unverified." });
@@ -1145,6 +1239,7 @@ async function research(part, opts, onNote, signal){
   }
   data._sources = sources;
   data._queries = [query];
+  data._fromCache = fromCache;
   return data;
 }
 
@@ -1247,6 +1342,65 @@ function oversizedPartCount(raw){
     .length;
 }
 
+/* Runs one queue entry to completion, in place. Both the batch loop and
+   the single-item retry go through here, so a retry updates the entry
+   that already exists instead of appending a second one for the same
+   part number — which was how a queue of 20 parts could end up 30 rows
+   long with three copies of the awkward ones. */
+async function processItem(item, signal, { forceFresh = false } = {}){
+  item.status = "running";
+  item.log = [];
+  state.activeId = item.id;
+  drawQueue(); draw();
+
+  try {
+    const data = await research(item.part, item.opts, (e) => {
+      item.log.push(e);
+      if (state.activeId === item.id) draw();
+    }, signal, { forceFresh });
+
+    item.data = normalise(data, item.part);
+    item.status = needsReview(item.data) ? "review" : "done";
+    item.error = null; item.errorRaw = null; item.errorModel = null;
+    bumpTally();
+  } catch (err){
+    if (err.name === "AbortError"){ item.status = "queued"; throw err; }
+    item.status = "error";
+    item.error = err.message || String(err);
+    item.errorRaw = err._raw ? JSON.stringify(err._raw, null, 2) : null;
+    item.errorModel = err._model || null;
+  }
+
+  drawQueue(); persistItems();
+  if (state.activeId === item.id) draw();
+}
+
+function startRun(){
+  state.running = true;
+  state.abort = new AbortController();
+  $("run").textContent = "Stop";
+  $("run").classList.remove("primary");
+}
+
+function endRun(){
+  state.running = false;
+  state.abort = null;
+  $("run").textContent = "Build listings";
+  $("run").classList.add("primary");
+  drawQueue();
+}
+
+/* Re-runs a single existing entry. forceFresh bypasses the saved search
+   and spends a Tavily credit — the right thing when the search itself
+   was the problem, the wrong thing when only the writing was. */
+async function rerunItem(item, { forceFresh = false } = {}){
+  if (state.running){ toast("A batch is running. Stop it first, or wait for it to finish."); return; }
+  startRun();
+  try { await processItem(item, state.abort.signal, { forceFresh }); }
+  catch (e){ if (e.name !== "AbortError") toast(e.message || String(e)); }
+  endRun();
+}
+
 async function runQueue(){
   if (state.running){ state.abort?.abort(); return; }
 
@@ -1262,79 +1416,73 @@ async function runQueue(){
   }
 
   const raw = $("parts").value;
-  const parts = parsePartNumbers(raw);
+  const parsed = parsePartNumbers(raw);
   const dropped = oversizedPartCount(raw);
+
+  // Dedupe against what is already in the queue, not just within this
+  // paste. Re-pasting an overlapping list used to research every repeat
+  // again from scratch, at one Tavily credit each, and leave the queue
+  // full of duplicate rows. Anything already here can be re-run from its
+  // own entry instead.
+  const already = new Set(state.items.map(i => i.part.trim().toUpperCase()));
+  const parts = parsed.filter(p => !already.has(p.trim().toUpperCase()));
+  const repeats = parsed.length - parts.length;
+
   if (!parts.length){
-    toast(dropped > 0
-      ? `Every line was over ${MAX_PART_LENGTH} characters — that's too long to be a real part number. Paste part numbers, not a block of text.`
-      : "Enter at least one part number.");
+    toast(repeats > 0
+      ? `Every part number is already in the queue. Open one and use "Run it again" to redo it.`
+      : dropped > 0
+        ? `Every line was over ${MAX_PART_LENGTH} characters — that's too long to be a real part number. Paste part numbers, not a block of text.`
+        : "Enter at least one part number.");
     return;
   }
   if (dropped > 0){
     toast(`Skipped ${dropped} line${dropped === 1 ? "" : "s"} over ${MAX_PART_LENGTH} characters — too long to be a real part number.`);
   }
-
-  // Tavily's monthly quota is the one most likely to bind, since each
-  // listing spends exactly one search. Warn before queuing a batch that
-  // would run past what's left this month.
-  const tavilyLeft = TAVILY_FREE_PER_MONTH - tavilyQuota.count;
-  if (parts.length > tavilyLeft){
-    if (!confirm(`You've used ${tavilyQuota.count.toLocaleString()} of this month's 1,000 free Tavily searches (${tavilyLeft.toLocaleString()} left) and queued ${parts.length} more. The ones past the limit will fail until Tavily's monthly allowance resets. Nothing will be charged either way. Run anyway?`)) return;
+  if (repeats > 0){
+    toast(`Skipped ${repeats} part number${repeats === 1 ? "" : "s"} already in the queue.`);
   }
 
+  // Only the parts with no usable saved search will actually spend a
+  // credit, so the warning counts those rather than the whole batch.
   const opts = { brand: $("brand").value, condition: $("condition").value };
+  const maxResults = settings.tavilyResults || 6;
+  const willSearch = parts.filter(p => !searchCacheGet(searchCacheKey(p, opts, maxResults))).length;
+  const cached = parts.length - willSearch;
+  const tavilyLeft = TAVILY_FREE_PER_MONTH - tavilyQuota.count;
+
+  if (willSearch > tavilyLeft){
+    const note = cached > 0 ? ` ${cached} of them will reuse a saved search and cost nothing.` : "";
+    if (!confirm(`You've used ${tavilyQuota.count.toLocaleString()} of this month's 1,000 free Tavily searches (${tavilyLeft.toLocaleString()} left) and queued ${parts.length}, of which ${willSearch} need a fresh search.${note} The ones past the limit will fail until Tavily's monthly allowance resets. Nothing will be charged either way. Run anyway?`)) return;
+  } else if (cached > 0){
+    toast(`${cached} of ${parts.length} will reuse a saved search — no credit spent on those.`);
+  }
+
   const batch = parts.map(p => ({
-    id: nextId++, part:p, status:"queued", data:null, error:null, log:[], opts
+    id: nextId++, part:p, status:"queued", data:null, error:null, log:[],
+    opts: { ...opts } // own copy per item, so editing one never edits the batch
   }));
   state.items.push(...batch);
   drawQueue();
 
-  state.running = true;
-  state.abort = new AbortController();
-  $("run").textContent = "Stop";
-  $("run").classList.remove("primary");
+  startRun();
 
   for (let i = 0; i < batch.length; i++){
-    const item = batch[i];
-    if (state.abort.signal.aborted){ item.status = "queued"; continue; }
-
-    item.status = "running";
-    item.log = [];
-    state.activeId = item.id;
-    drawQueue(); draw();
-
-    try {
-      const data = await research(item.part, item.opts, (e) => {
-        item.log.push(e);
-        if (state.activeId === item.id) draw();
-      }, state.abort.signal);
-
-      item.data = normalise(data, item.part);
-      item.status = needsReview(item.data) ? "review" : "done";
-      bumpTally();
-    } catch (err){
-      if (err.name === "AbortError"){ item.status = "queued"; break; }
-      item.status = "error";
-      item.error = err.message || String(err);
-      item.errorRaw = err._raw ? JSON.stringify(err._raw, null, 2) : null;
-      item.errorModel = err._model || null;
-    }
-
-    drawQueue(); persistItems();
-    if (state.activeId === item.id) draw();
+    if (state.abort.signal.aborted){ batch[i].status = "queued"; continue; }
+    try { await processItem(batch[i], state.abort.signal); }
+    catch (e){ if (e.name === "AbortError") break; }
 
     // Pace the batch so the free tier's per-minute limit isn't tripped.
-    if (i < batch.length - 1 && settings.gapSeconds > 0){
+    // A cache hit made no API call, so it needs no cooling-off period.
+    const next = batch[i + 1];
+    const nextNeedsSearch = next && !searchCacheGet(searchCacheKey(next.part, next.opts, maxResults));
+    if (next && settings.gapSeconds > 0 && nextNeedsSearch){
       try { await sleep(settings.gapSeconds * 1000, state.abort.signal); }
       catch { break; }
     }
   }
 
-  state.running = false;
-  state.abort = null;
-  $("run").textContent = "Build listings";
-  $("run").classList.add("primary");
-  drawQueue();
+  endRun();
 }
 
 function normalise(d, part){
@@ -1366,6 +1514,7 @@ function normalise(d, part){
     warnings: arr(d.warnings).map(s).filter(Boolean),
     sources,
     queries: arr(d._queries),
+    fromCache: d._fromCache === true,
     searchPerformed: sources.length > 0
   };
 }
@@ -1425,21 +1574,18 @@ function draw(){
 
 function wireRetry(item){
   const retry = $("btn-retry");
-  if (!retry) return;
-  retry.onclick = () => {
-    // Previously this wrote into the part-numbers box and called
-    // runQueue() blind. If a batch was already running, runQueue()'s
-    // first branch reads as a Stop toggle — so "Try this one again"
-    // silently killed the batch. And whatever the operator had typed
-    // into the box was overwritten either way.
-    if (state.running){ toast("A batch is running. Stop it first, or wait for it to finish."); return; }
-    const box = $("parts");
-    const previous = box.value;
-    box.value = item.part;
-    $("brand").value = item.opts?.brand || "";
-    $("condition").value = item.opts?.condition ?? "New";
-    runQueue();
-    box.value = previous; // runQueue has already read it; give the operator their list back
+  // Re-runs the entry in place. The saved search is reused, so this
+  // costs no Tavily credit — it redoes the writing, which is what
+  // "run it again" almost always means.
+  if (retry) retry.onclick = () => rerunItem(item, { forceFresh:false });
+
+  // The escape hatch for when the search results themselves were the
+  // problem. Labelled with its cost, because that cost is the scarce
+  // thing here.
+  const fresh = $("btn-fresh");
+  if (fresh) fresh.onclick = () => {
+    if (!confirm("Discard the saved search for this part number and search Tavily again? This spends one of your 1,000 monthly searches. Nothing is charged either way.")) return;
+    rerunItem(item, { forceFresh:true });
   };
 
   const copyRaw = $("btn-copy-raw");
@@ -1490,7 +1636,10 @@ function errorView(item){
     <div class="result-head"><h1>${esc(item.part)}</h1></div>
     <div class="note bad"><b>Didn't finish.</b><br>${esc(item.error)}</div>
     ${raw}
-    <div class="actions" style="margin-top:14px"><button class="btn" id="btn-retry">Try this one again</button></div>
+    <div class="actions" style="margin-top:14px">
+      <button class="btn" id="btn-retry">Try this one again</button>
+      <button class="btn" id="btn-fresh">Search again (1 credit)</button>
+    </div>
   </div>`;
 }
 
@@ -1543,6 +1692,7 @@ function resultView(item){
     <div class="panel">
       <div class="panel-head"><h3>Sources</h3></div>
       <div class="panel-body">
+        ${d.fromCache ? `<p class="hint" style="margin:0 0 10px">Built from a saved search rather than a fresh one, so no Tavily credit was spent. Use "Search again" if the sources below look stale or wrong.</p>` : ""}
         ${d.queries?.length ? `<div class="queries">${d.queries.map(q => `<span class="chip">${esc(q)}</span>`).join("")}</div>` : ""}
         ${d.sources.length ? `<ul class="sources">${d.sources.map((s,i) => {
             const href = safeUrl(s.url);
@@ -1569,6 +1719,7 @@ function resultView(item){
     <div class="actions">
       <button class="btn primary" data-copy="all">Copy the whole listing</button>
       <button class="btn" id="btn-retry">Run it again</button>
+      <button class="btn" id="btn-fresh">Search again (1 credit)</button>
     </div>
 
     <div class="panel">
@@ -1761,6 +1912,8 @@ function openSettings(){
   $("s-key").value = (settings.apiKeys || []).join("\n");
   $("s-tavily-key").value = settings.tavilyKey || "";
   $("s-tavily-results").value = settings.tavilyResults || 6;
+  $("s-cache-days").value = settings.cacheDays;
+  $("cache-count").textContent = `${searchCacheCount()} saved`;
   $("s-format-model").value = settings.formatModel;
   $("s-gap").value = settings.gapSeconds;
   $("s-retries").value = settings.retries;
@@ -1799,7 +1952,7 @@ $("settings").addEventListener("close", () => {
     bulletMin: +$("s-bullet-min").value, bulletMax: +$("s-bullet-max").value,
     descMin: +$("s-desc-min").value, descMax: +$("s-desc-max").value
   };
-  Object.assign(settings, wanted, { refitPasses: +$("s-refit").value });
+  Object.assign(settings, wanted, { refitPasses: +$("s-refit").value, cacheDays: +$("s-cache-days").value });
   normaliseLengthSettings(settings);
   const clamped = Object.keys(wanted).some(k => wanted[k] !== settings[k]);
 
@@ -1853,6 +2006,16 @@ $("btn-check-models").onclick = async () => {
 };
 
 
+$("btn-clear-cache").onclick = () => {
+  const n = searchCacheCount();
+  if (!n){ toast("No saved searches to clear."); return; }
+  if (!confirm(`Delete ${n} saved search${n === 1 ? "" : "es"}? Every part number will then need a fresh Tavily search, spending one credit each.`)) return;
+  searchCache = {};
+  persistSearchCache();
+  $("cache-count").textContent = "0 saved";
+  toast(`Cleared ${n} saved search${n === 1 ? "" : "es"}.`);
+};
+
 $("btn-reset-tally").onclick = () => {
   tally = { date: localDay(), n: 0 };
   store.set("pd.tally", JSON.stringify(tally));
@@ -1864,7 +2027,7 @@ $("btn-wipe").onclick = () => {
   if (!confirm("Clear the API key, settings, counts and the queue from this browser?")) return;
   // pd.tavilyQuota was missing here, so "Clear everything" left the
   // month's search count behind and it reappeared after the reload.
-  ["pd.settings","pd.tally","pd.quota","pd.tavilyQuota","pd.items"].forEach(k => store.del(k));
+  ["pd.settings","pd.tally","pd.quota","pd.tavilyQuota","pd.items","pd.searchCache"].forEach(k => store.del(k));
   location.reload();
 };
 
@@ -1872,7 +2035,9 @@ $("btn-wipe").onclick = () => {
    Wiring
    ============================================================ */
 
-$("run").onclick = runQueue;
+// Wrapped rather than passed directly: as an onclick handler, runQueue
+// would receive the click event as its first argument.
+$("run").onclick = () => runQueue();
 $("btn-csv").onclick = exportCsv;
 
 document.addEventListener("keydown", (e) => {
