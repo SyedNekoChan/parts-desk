@@ -1,0 +1,61 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # Lets you re-run a deploy from the Actions tab without a new commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race. In-progress runs finish rather than being
+# cancelled, so a half-uploaded site is never what ends up live.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # `npm install` rather than `npm ci`, because `npm ci` requires a
+      # package-lock.json and this project is uploaded through the GitHub
+      # web interface, where there's no local npm run to generate one.
+      # The trade-off: without a lockfile, dependencies resolve fresh on
+      # every build, so a patch release upstream could in principle change
+      # what ships. Acceptable here; if you ever do get a machine where you
+      # can run npm, commit the lockfile and change this back to `npm ci`.
+      - run: npm install
+
+      - run: npm test
+
+      - name: Build
+        # The repository name becomes the URL prefix on a project site.
+        # Reading it from the workflow context means a fork or a rename
+        # keeps working without anyone editing vite.config.js.
+        run: VITE_BASE="/${GITHUB_REPOSITORY#*/}/" npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
