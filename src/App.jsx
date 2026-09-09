@@ -300,18 +300,7 @@ export default function App() {
             </div>
           </div>
 
-          <p className="hidden flex-1 text-xs text-slate-500 lg:block dark:text-slate-400">
-            Part numbers in, listing copy out, with the sources it used.
-          </p>
-
           <div className="ml-auto flex items-center gap-2">
-  {(settings.apiKeys || []).filter(Boolean).length > 0 && (settings.tavilyKey || "").trim() && (
-    <span className="hidden items-center gap-1.5 pd-chip sm:inline-flex">
-      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-      Engine ready
-    </span>
-  )}
-
   <button
     className="pd-btn pd-btn-xs"
     onClick={() => setShowSettings(true)}
@@ -355,8 +344,11 @@ export default function App() {
 
   {activeTab === "builder" ? (
     <div className="grid gap-6 lg:grid-cols-[26rem_minmax(0,1fr)] lg:gap-7">
-        {/* Left rail */}
-        <div className="lg:sticky lg:top-[4.25rem] lg:self-start">
+        {/* Left rail — pinned while the right pane scrolls. Height is
+            capped to the space below the sticky offset so nothing
+            inside it, including the footer, can be pushed off-screen;
+            it scrolls internally on short viewports instead. */}
+        <div className="lg:sticky lg:top-[4.25rem] lg:max-h-[calc(100vh-5.25rem)] lg:self-start lg:overflow-y-auto lg:overflow-x-hidden lg:pr-0.5">
           <div className="pd-surface p-5">
             <div className="mb-4 flex items-center justify-between">
               <span className="pd-section-title">New listing batch</span>
@@ -415,7 +407,9 @@ export default function App() {
             />
           </div>
 
-          <Footer />
+          <div className="pb-2">
+            <Footer />
+          </div>
         </div>
 
         {/* Right pane */}

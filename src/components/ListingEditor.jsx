@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { rangeState, lengthIssues, describeIssue, fieldValue, setFieldValue } from "../lib/lengths.js";
+import { rangeState, lengthIssues, describeIssue } from "../lib/lengths.js";
 import { refitOne } from "../lib/research.js";
 import { safeUrl } from "../lib/research.js";
 import { distanceOutside } from "../lib/lengths.js";
@@ -42,12 +42,14 @@ function Counter({ state, label }) {
   return <span className={"font-mono text-xs tabular-nums " + tone}>{label}</span>;
 }
 
-/* Counter + range bar, stacked, for the title/description headers. */
+/* Counter + range bar, stacked, for the title/description headers.
+   Uses a max-width instead of a fixed width so it can shrink on narrow
+   viewports without pushing past the section's padding. */
 function RangeCounter({ r }) {
   const statusLabel =
     r.state === "over" ? `⚠ ${r.off} over` : r.state === "under" ? `⚠ ${r.off} short` : "Good";
   return (
-    <div className="flex w-40 shrink-0 flex-col items-end gap-1">
+    <div className="flex w-full max-w-[10rem] shrink-0 flex-col items-end gap-1 sm:w-40">
       <div className="flex items-baseline gap-2">
         <Counter state={r.state} label={r.label} />
       </div>
@@ -67,13 +69,17 @@ function RangeCounter({ r }) {
 }
 
 /* Document-style section: typography + a divider instead of a nested
-   rounded card. Used for Title / Bullets / Description / Specs / etc. */
-function Section({ title, meta, action, children }) {
+   rounded card. Used for Title / Bullets / Description / Specs / etc.
+   The header wraps onto a second row on narrow widths rather than
+   compressing the divider and meta block into each other. */
+function Section({ title, meta, action, children, className = "" }) {
   return (
-    <section className="pd-section">
+    <section className={"pd-section " + className}>
       <header className="pd-section-head">
-        <h3 className="pd-section-title">{title}</h3>
-        <span className="h-px flex-1 bg-slate-200 dark:bg-slate-800" aria-hidden="true" />
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <h3 className="pd-section-title shrink-0">{title}</h3>
+          <span className="h-px min-w-[1.5rem] flex-1 bg-slate-200 dark:bg-slate-800" aria-hidden="true" />
+        </div>
         {meta}
         {action && <div className="flex items-center gap-1.5">{action}</div>}
       </header>
@@ -144,30 +150,7 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     setFitting(null);
   };
 
-  /* Fix every out-of-range field in one pass, reusing the same fit()
-     path each "Fit to range" button already uses — no new backend call
-     shape, just looped invocation. */
-  const [fixingAll, setFixingAll] = useState(false);
   const issues = useMemo(() => lengthIssues(d, settings), [d, settings]);
-
-  const fixAll = async () => {
-    setFixingAll(true);
-    for (const issue of lengthIssues(d, settings)) {
-      const value = fieldValue(d, issue.field);
-      try {
-        const out = await refitOne(issue.field, value, issue.min, issue.max, d.sources, settings);
-        const before = distanceOutside(value.trim().length, issue.min, issue.max);
-        const after = out ? distanceOutside(out.trim().length, issue.min, issue.max) : Infinity;
-        if (out && after < before) {
-          const next = { ...d };
-          setFieldValue(next, issue.field, out);
-          patch(next);
-        }
-      } catch { /* leave that field as-is and continue */ }
-    }
-    setFixingAll(false);
-    onToast("Fix pass complete.");
-  };
 
   const conf = d.confidence === "high" && d.identified ? ["ok", "HIGH CONFIDENCE"]
     : d.confidence === "low" || !d.identified ? ["bad", "NEEDS CHECKING"]
@@ -275,16 +258,9 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
       {/* ---------- Compact review summary ---------- */}
       {(otherFlags.length > 0 || issues.length > 0) && (
         <section className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900/60 dark:bg-amber-950/30">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="font-semibold text-amber-800 dark:text-amber-300">
-              ⚠ {reviewCount} item{reviewCount === 1 ? "" : "s"} need review
-            </p>
-            {issues.length > 0 && (
-              <button className="pd-btn pd-btn-xs" disabled={fixingAll} onClick={fixAll}>
-                {fixingAll ? "Fixing…" : "Fix automatically"}
-              </button>
-            )}
-          </div>
+          <p className="font-semibold text-amber-800 dark:text-amber-300">
+            ⚠ {reviewCount} item{reviewCount === 1 ? "" : "s"} need review
+          </p>
 
           {issues.length > 0 && (
             <ul className="mt-2 space-y-1 font-mono text-xs text-amber-900/90 dark:text-amber-200/80">
@@ -470,6 +446,7 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
           <Section
             title="Research evidence"
             meta={<span className="pd-metric">{d.sources.length} source{d.sources.length === 1 ? "" : "s"}</span>}
+            className="!pb-5"
           >
             {d.fromCache && (
               <p className="mb-3 pd-hint">
@@ -493,7 +470,7 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
                 {d.sources.map((s, i) => {
                   const href = safeUrl(s.url);
                   return (
-                    <li key={i} className="flex gap-3 py-2 first:pt-0 last:pb-0">
+                    <li key={i} className="flex gap-3 py-2 first:pt-0">
                       <span className="w-4 shrink-0 font-mono text-xs text-slate-400">{i + 1}</span>
                       {href ? (
                         <a
