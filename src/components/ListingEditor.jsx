@@ -47,17 +47,17 @@ function Counter({ state, label }) {
 }
 
 /* Counter + range bar, stacked, for the title/description headers.
-   Uses a max-width instead of a fixed width so it can shrink on narrow
-   viewports, and carries its own end margin so it never sits flush
-   against the card's rounded (overflow-hidden) boundary regardless of
-   how the parent's padding is set. Text wraps instead of overflowing
-   so a long label (e.g. "153 / 150 min — 3 short") can't clip. */
+   min-w-0 on the inner wrapper is the actual fix for clipping: a flex
+   item's default min-width is auto (its content's natural, unwrapped
+   width), which silently overrides max-width on the outer box. Setting
+   min-w-0 lets the flex algorithm actually honor the cap and wrap the
+   label instead of forcing the box wider than its column. */
 function RangeCounter({ r }) {
   const statusLabel =
     r.state === "over" ? `⚠ ${r.off} over` : r.state === "under" ? `⚠ ${r.off} short` : "Good";
   return (
-    <div className="mr-0.5 flex w-full max-w-[11rem] shrink-0 flex-col items-end gap-1 sm:w-40">
-      <div className="flex max-w-full items-baseline gap-2">
+    <div className="flex min-w-0 max-w-[11rem] flex-1 flex-col items-end gap-1 pl-3">
+      <div className="min-w-0 max-w-full">
         <Counter state={r.state} label={r.label} />
       </div>
       <RangeBar n={r.n} min={0} max={r.state === "under" ? r.n + r.off : r.n} state={r.state} />
@@ -326,18 +326,7 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
             title="Title"
             meta={<RangeCounter r={titleR} />}
             action={
-              <>
-                {titleR.state !== "ok" && (
-                  <button
-                    className="pd-btn pd-btn-xs"
-                    disabled={fitting === "title"}
-                    onClick={() => fit("title", d.title, settings.titleMin, settings.titleMax, v => patch({ title: v }))}
-                  >
-                    {fitting === "title" ? "Fitting…" : "Fit to range"}
-                  </button>
-                )}
-                <button className="pd-btn pd-btn-xs" onClick={() => copy(d.title, "Title")}>Copy</button>
-              </>
+              <button className="pd-btn pd-btn-xs" onClick={() => copy(d.title, "Title")}>Copy</button>
             }
           >
             <AutoTextarea value={d.title} onChange={v => patch({ title: v })} aria-label="Listing title" />

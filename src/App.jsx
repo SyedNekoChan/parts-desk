@@ -24,7 +24,7 @@ const CONDITIONS = ["New", "New — open box", "Refurbished", "Used — tested",
    drift out of sync. */
 function TabBar({ activeTab, onChange, queueCount }) {
   return (
-    <div className="pd-tabbar mb-6">
+    <div className="pd-tabbar mb-6 inline-flex">
       <button
         type="button"
         className={"pd-tab " + (activeTab === "builder" ? "pd-tab-active" : "")}
@@ -349,15 +349,16 @@ export default function App() {
 
   {activeTab === "builder" ? (
     <div className="grid gap-6 lg:grid-cols-[26rem_minmax(0,1fr)] lg:gap-7">
-        {/* Left rail — tabs + batch panel + daily output all pinned as
-            one sticky unit while the right pane scrolls. Height is
-            capped to the space below the sticky offset so nothing
-            inside it, including the footer, can be pushed off-screen;
-            it scrolls internally on short viewports instead. */}
-        <div className="lg:sticky lg:top-[4.25rem] lg:max-h-[calc(100dvh-4.25rem-1rem)] lg:self-start lg:overflow-y-auto lg:overflow-x-hidden lg:pr-0.5">
+        {/* Left rail — tabs + batch panel + daily output pinned as one
+            sticky unit while the right pane scrolls. Sized to its own
+            natural content height (no fixed height, no internal
+            scroll) — sticky positioning already stops pinning once the
+            grid row runs out of room, so nothing needs to scroll on
+            its own. */}
+        <div className="lg:sticky lg:top-[4.25rem] lg:self-start">
           <TabBar activeTab={activeTab} onChange={setActiveTab} queueCount={items.length} />
 
-          <div className="pd-surface p-5">
+          <div className="pd-surface" style={{ padding: "clamp(0.875rem, 1vh + 0.6rem, 1.25rem)" }}>
             <div className="mb-4 flex items-center justify-between">
               <span className="pd-section-title">New listing batch</span>
               {queued > 0 && <span className="pd-chip">{queued} queued</span>}
@@ -402,7 +403,7 @@ export default function App() {
             <p className="mt-2 pd-hint">Ctrl/⌘ + Enter also starts a batch.</p>
           </div>
 
-          <div className="pd-surface mt-4 p-4">
+          <div className="pd-surface p-4" style={{ marginTop: "clamp(0.75rem, 1.5vh, 1rem)" }}>
             <span className="pd-section-title">Daily output</span>
             <ProgressBar
               className="mt-3"
