@@ -39,24 +39,31 @@ function Counter({ state, label }) {
     state === "over" ? "text-rose-600 dark:text-rose-400 font-semibold"
       : state === "under" ? "text-amber-600 dark:text-amber-400 font-semibold"
       : "text-slate-500 dark:text-slate-400";
-  return <span className={"font-mono text-xs tabular-nums " + tone}>{label}</span>;
+  return (
+    <span className={"break-words text-right font-mono text-xs tabular-nums " + tone}>
+      {label}
+    </span>
+  );
 }
 
 /* Counter + range bar, stacked, for the title/description headers.
    Uses a max-width instead of a fixed width so it can shrink on narrow
-   viewports without pushing past the section's padding. */
+   viewports, and carries its own end margin so it never sits flush
+   against the card's rounded (overflow-hidden) boundary regardless of
+   how the parent's padding is set. Text wraps instead of overflowing
+   so a long label (e.g. "153 / 150 min — 3 short") can't clip. */
 function RangeCounter({ r }) {
   const statusLabel =
     r.state === "over" ? `⚠ ${r.off} over` : r.state === "under" ? `⚠ ${r.off} short` : "Good";
   return (
-    <div className="flex w-full max-w-[10rem] shrink-0 flex-col items-end gap-1 sm:w-40">
-      <div className="flex items-baseline gap-2">
+    <div className="mr-0.5 flex w-full max-w-[11rem] shrink-0 flex-col items-end gap-1 sm:w-40">
+      <div className="flex max-w-full items-baseline gap-2">
         <Counter state={r.state} label={r.label} />
       </div>
       <RangeBar n={r.n} min={0} max={r.state === "under" ? r.n + r.off : r.n} state={r.state} />
       <span
         className={
-          "text-[10px] font-medium uppercase tracking-wide " +
+          "text-right text-[10px] font-medium uppercase tracking-wide " +
           (r.state === "over" ? "text-rose-600 dark:text-rose-400"
             : r.state === "under" ? "text-amber-600 dark:text-amber-400"
             : "text-emerald-600 dark:text-emerald-400")
@@ -314,7 +321,7 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
       {view === "preview" ? (
         <ListingPreview d={d} />
       ) : (
-        <div className="pd-surface px-5">
+        <div className="pd-surface px-5 sm:px-6">
           <Section
             title="Title"
             meta={<RangeCounter r={titleR} />}

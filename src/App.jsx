@@ -19,6 +19,38 @@ import { downloadCsv } from "./lib/csv.js";
 
 const CONDITIONS = ["New", "New — open box", "Refurbished", "Used — tested", "For parts", ""];
 
+/* Rendered once per tab switch (only one branch is ever mounted at a
+   time), but the markup is shared here so the two call sites can't
+   drift out of sync. */
+function TabBar({ activeTab, onChange, queueCount }) {
+  return (
+    <div className="pd-tabbar mb-6">
+      <button
+        type="button"
+        className={"pd-tab " + (activeTab === "builder" ? "pd-tab-active" : "")}
+        onClick={() => onChange("builder")}
+      >
+        <span className="pd-tab-indicator" />
+        Builder
+      </button>
+
+      <button
+        type="button"
+        className={"pd-tab " + (activeTab === "queue" ? "pd-tab-active" : "")}
+        onClick={() => onChange("queue")}
+      >
+        <span className="pd-tab-indicator" />
+        Queue
+        {queueCount > 0 && (
+          <span className="pd-tab-count">
+            {queueCount}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
 /* Items are persisted without their log, which is transient and can be
    long. The previous version truncated the serialised queue with
    slice(), producing a string that was no longer valid JSON — so the
@@ -315,40 +347,16 @@ export default function App() {
 
       <main className="mx-auto max-w-[88rem] px-4 py-6 sm:px-6">
 
-  <div className="mb-6 flex items-center justify-between">
-    <div className="pd-tabbar">
-      <button
-        type="button"
-        className={"pd-tab " + (activeTab === "builder" ? "pd-tab-active" : "")}
-        onClick={() => setActiveTab("builder")}
-      >
-        <span className="pd-tab-indicator" />
-        Builder
-      </button>
-
-      <button
-        type="button"
-        className={"pd-tab " + (activeTab === "queue" ? "pd-tab-active" : "")}
-        onClick={() => setActiveTab("queue")}
-      >
-        <span className="pd-tab-indicator" />
-        Queue
-        {items.length > 0 && (
-          <span className="pd-tab-count">
-            {items.length}
-          </span>
-        )}
-      </button>
-    </div>
-  </div>
-
   {activeTab === "builder" ? (
     <div className="grid gap-6 lg:grid-cols-[26rem_minmax(0,1fr)] lg:gap-7">
-        {/* Left rail — pinned while the right pane scrolls. Height is
+        {/* Left rail — tabs + batch panel + daily output all pinned as
+            one sticky unit while the right pane scrolls. Height is
             capped to the space below the sticky offset so nothing
             inside it, including the footer, can be pushed off-screen;
             it scrolls internally on short viewports instead. */}
-        <div className="lg:sticky lg:top-[4.25rem] lg:max-h-[calc(100vh-5.25rem)] lg:self-start lg:overflow-y-auto lg:overflow-x-hidden lg:pr-0.5">
+        <div className="lg:sticky lg:top-[4.25rem] lg:max-h-[calc(100dvh-4.25rem-1rem)] lg:self-start lg:overflow-y-auto lg:overflow-x-hidden lg:pr-0.5">
+          <TabBar activeTab={activeTab} onChange={setActiveTab} queueCount={items.length} />
+
           <div className="pd-surface p-5">
             <div className="mb-4 flex items-center justify-between">
               <span className="pd-section-title">New listing batch</span>
@@ -475,18 +483,22 @@ export default function App() {
         </div>
       </div>
   ) : (
-    <QueueManager
-      items={items}
-      activeId={activeId}
-      running={running}
-      settings={settings}
-      onSelect={id => {
-        setActiveId(id);
-        setActiveTab("builder");
-      }}
-      onClear={clearQueue}
-      onExport={exportCsv}
-    />
+    <>
+      <TabBar activeTab={activeTab} onChange={setActiveTab} queueCount={items.length} />
+
+      <QueueManager
+        items={items}
+        activeId={activeId}
+        running={running}
+        settings={settings}
+        onSelect={id => {
+          setActiveId(id);
+          setActiveTab("builder");
+        }}
+        onClear={clearQueue}
+        onExport={exportCsv}
+      />
+    </>
   )}
 </main>
 
