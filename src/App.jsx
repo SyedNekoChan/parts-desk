@@ -332,11 +332,11 @@ export default function App() {
             </div>
           </div>
 
-          <div className="hidden md:block">
-            <Footer />
-          </div>
+          <div className="ml-auto flex items-center gap-3">
+  <div className="hidden md:block">
+    <Footer />
+  </div>
 
-          <div className="ml-auto flex items-center gap-2">
   <button
     className="pd-btn pd-btn-xs"
     onClick={() => setShowSettings(true)}

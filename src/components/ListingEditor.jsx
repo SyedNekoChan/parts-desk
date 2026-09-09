@@ -63,7 +63,7 @@ function RangeCounter({ r }) {
     r.state === "over" ? `⚠ ${r.off} over` : r.state === "under" ? `⚠ ${r.off} short` : "Good";
 
   return (
-    <div className="flex min-w-0 max-w-[11rem] flex-1 flex-col items-end gap-1 pl-3">
+    <div className="flex min-w-0 max-w-[11rem] shrink-0 flex-col items-end gap-1 px-3">
       <div className="min-w-0 max-w-full">
         <Counter state={r.state} label={shortLabel} />
       </div>
