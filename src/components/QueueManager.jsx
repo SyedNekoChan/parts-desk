@@ -116,6 +116,8 @@ export default function QueueManager({
 }) {
   const [confirming, setConfirming] = useState(false);
   const [filter, setFilter] = useState(null); // presentation-only row filter, not persisted
+  const [query, setQuery] = useState(""); // local search text, not persisted
+  const [sortBy, setSortBy] = useState("recent"); // local sort mode, not persisted
 
   const stats = useMemo(() => {
     const by = {
@@ -142,7 +144,30 @@ export default function QueueManager({
 
   const empty = items.length === 0;
   const exportable = items.filter(i => i.data).length;
-  const visibleItems = filter ? items.filter(i => i.status === filter) : items;
+
+  const searched = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(item => {
+      const d = item.data;
+      const haystack = [
+        item.part,
+        d?.brand, d?.model, d?.product_type
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [items, query]);
+
+  const filtered = filter ? searched.filter(i => i.status === filter) : searched;
+
+  const STATUS_ORDER = { review: 0, error: 1, running: 2, queued: 3, done: 4 };
+  const visibleItems = useMemo(() => {
+    if (sortBy === "recent") return [...filtered].reverse();
+    if (sortBy === "part") return [...filtered].sort((a, b) => a.part.localeCompare(b.part));
+    if (sortBy === "status") return [...filtered].sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9));
+    if (sortBy === "review") return [...filtered].sort((a, b) => (a.status === "review" ? 0 : 1) - (b.status === "review" ? 0 : 1));
+    return filtered;
+  }, [filtered, sortBy]);
 
   const confirmClear = () => {
     setConfirming(false);
@@ -214,18 +239,40 @@ export default function QueueManager({
                 <span className="pd-status-dot pd-status-queued" />
               </div>
 
-              <h3 className="mt-4 text-lg font-semibold text-slate-800 dark:text-slate-100">
-                Queue is empty
+              <h3 className="mt-4 text-sm font-bold uppercase tracking-[0.1em] text-slate-800 dark:text-slate-100">
+                No listings yet
               </h3>
 
               <p className="mt-2 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
-                Paste part numbers into the Builder and start a batch.
-                Processed listings will appear here automatically.
+                Add part numbers to begin building your next batch.
               </p>
             </div>
           </div>
         ) : (
           <>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Search part number, model, brand…"
+                className="pd-input min-w-0 flex-1 sm:max-w-xs"
+                aria-label="Search the queue"
+              />
+
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="pd-input w-auto shrink-0"
+                aria-label="Sort the queue"
+              >
+                <option value="recent">Recently updated</option>
+                <option value="part">Part number</option>
+                <option value="status">Status</option>
+                <option value="review">Review first</option>
+              </select>
+            </div>
+
             <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
               {Object.entries(STATUS).map(([key, status]) => {
                 const isActive = filter === key;
@@ -249,8 +296,14 @@ export default function QueueManager({
               })}
             </div>
 
-            {filter && visibleItems.length === 0 && (
-              <p className="pd-hint mb-3">No listings in this status.</p>
+            {visibleItems.length === 0 && (query.trim() || filter) && (
+              <p className="pd-hint mb-3">
+                {query.trim() && filter
+                  ? "No listings match that search in this status."
+                  : query.trim()
+                    ? "No listings match that search."
+                    : "No listings in this status."}
+              </p>
             )}
 
             <div className="overflow-hidden rounded-2xl border border-slate-200/80 dark:border-slate-800/80">
