@@ -485,9 +485,14 @@
   }
 
   .pd-tab-active .pd-tab-count {
-    @apply bg-white/15 text-white;
-    @apply dark:bg-slate-900/10 dark:text-slate-900;
-  }
+  background: rgb(255 255 255 / 0.15);
+  color: white;
+}
+
+.dark .pd-tab-active .pd-tab-count {
+  background: rgb(15 23 42 / 0.10);
+  color: rgb(15 23 42);
+}
 
   /* ----------------------------------------------------------
      Queue status indicators
