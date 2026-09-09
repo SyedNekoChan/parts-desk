@@ -98,3 +98,24 @@ export default function ProgressBar({
     </div>
   );
 }
+
+/* Compact bar for a single field's character range. Purely a rendering
+   of the rangeState() the editor already computes — no new validation
+   rules, just a bar instead of a bare number. */
+export function RangeBar({ n, min, max, state }) {
+  const safeMax = Math.max(1, max);
+  const pct =
+    state === "over" ? 100
+      : Math.max(4, Math.min(100, (n / safeMax) * 100));
+
+  const fillClass =
+    state === "over" ? "pd-range-fill-over"
+      : state === "under" ? "pd-range-fill-under"
+      : "pd-range-fill-ok";
+
+  return (
+    <div className="pd-range-track" role="presentation">
+      <div className={"pd-range-fill " + fillClass} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
