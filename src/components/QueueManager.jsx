@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ProgressBar from "./ProgressBar.jsx";
+import { rangeState } from "../lib/lengths.js";
 
 const STATUS = {
   queued: {
@@ -108,11 +109,13 @@ export default function QueueManager({
   items,
   activeId,
   running,
+  settings,
   onSelect,
   onClear,
   onExport,
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [filter, setFilter] = useState(null); // presentation-only row filter, not persisted
 
   const stats = useMemo(() => {
     const by = {
@@ -139,6 +142,7 @@ export default function QueueManager({
 
   const empty = items.length === 0;
   const exportable = items.filter(i => i.data).length;
+  const visibleItems = filter ? items.filter(i => i.status === filter) : items;
 
   const confirmClear = () => {
     setConfirming(false);
@@ -168,11 +172,11 @@ export default function QueueManager({
               id="queue-heading"
               className="mt-1 font-mono text-2xl font-bold tracking-tight text-slate-950 dark:text-white"
             >
-              Listing Queue
+              Listing Operations
             </h2>
 
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Monitor every part number currently being processed.
+              Monitor, review and export generated listings.
             </p>
           </div>
 
@@ -223,27 +227,50 @@ export default function QueueManager({
         ) : (
           <>
             <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
-              {Object.entries(STATUS).map(([key, status]) => (
-                <div
-                  key={key}
-                  className="pd-inset flex items-center gap-2 px-3 py-2"
-                >
-                  <span className={status.dot} aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    {status.text}
-                  </span>
-                  <span className="font-mono text-xs tabular-nums text-slate-700 dark:text-slate-200">
-                    {stats.by[key]}
-                  </span>
-                </div>
-              ))}
+              {Object.entries(STATUS).map(([key, status]) => {
+                const isActive = filter === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setFilter(isActive ? null : key)}
+                    aria-pressed={isActive}
+                    className={"pd-filter " + (isActive ? "pd-filter-active" : "")}
+                  >
+                    <span className={status.dot} aria-hidden="true" />
+                    <span className={"min-w-0 flex-1 truncate text-left text-[11px] font-semibold uppercase tracking-wide " + (isActive ? "" : "text-slate-500 dark:text-slate-400")}>
+                      {status.text}
+                    </span>
+                    <span className={"font-mono text-xs tabular-nums " + (isActive ? "" : "text-slate-700 dark:text-slate-200")}>
+                      {stats.by[key]}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
+
+            {filter && visibleItems.length === 0 && (
+              <p className="pd-hint mb-3">No listings in this status.</p>
+            )}
 
             <div className="overflow-hidden rounded-2xl border border-slate-200/80 dark:border-slate-800/80">
               <ul className="divide-y divide-slate-200/70 dark:divide-slate-800/70">
-                {items.map(item => {
+                {visibleItems.map(item => {
                   const s = STATUS[item.status] || STATUS.queued;
                   const active = item.id === activeId;
+                  const d = item.data;
+
+                  const identity = d
+                    ? [d.brand, d.model, d.product_type].filter(Boolean).join(" ") || "Unidentified part"
+                    : null;
+
+                  const checks = d && settings
+                    ? [
+                        { label: "Title", ok: rangeState(d.title, settings.titleMin, settings.titleMax).state === "ok" },
+                        { label: "Bullets", ok: !d.bullets.some(b => rangeState(b, settings.bulletMin, settings.bulletMax).state !== "ok") },
+                        { label: "Description", ok: rangeState(d.description, settings.descMin, settings.descMax).state === "ok" }
+                      ]
+                    : [];
 
                   return (
                     <li key={item.id}>
@@ -252,7 +279,7 @@ export default function QueueManager({
                         onClick={() => onSelect(item.id)}
                         aria-current={active ? "true" : undefined}
                         className={
-                          "pd-queue-item group flex w-full items-center gap-4 px-4 py-4 text-left " +
+                          "pd-queue-item group flex w-full items-center gap-4 px-4 py-3 text-left " +
                           (active
                             ? "pd-queue-active"
                             : "hover:bg-slate-50 dark:hover:bg-slate-900/70")
@@ -265,18 +292,39 @@ export default function QueueManager({
                           />
                         </span>
 
-                        <span className="min-w-0 flex-1">
+                        <span className="min-w-[9rem] shrink-0">
                           <span className="block truncate font-mono text-sm font-semibold text-slate-800 dark:text-slate-100">
                             {item.part}
                           </span>
-
                           <span className="mt-0.5 block truncate text-xs text-slate-400 dark:text-slate-500">
-                            {s.description}
+                            {identity || s.description}
                           </span>
                         </span>
 
-                        <span className="pd-chip shrink-0">
-                          {s.text}
+                        {checks.length > 0 && (
+                          <span className="hidden shrink-0 items-center gap-3 text-xs sm:flex">
+                            {checks.map((c, i) => (
+                              <span key={i} className={"flex items-center gap-1 " + (c.ok ? "text-slate-500 dark:text-slate-400" : "text-amber-600 dark:text-amber-400")}>
+                                <span aria-hidden="true">{c.ok ? "✓" : "⚠"}</span>
+                                {c.label}
+                              </span>
+                            ))}
+                            <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400">
+                              <span aria-hidden="true">✓</span>
+                              Sources {d.sources.length}
+                            </span>
+                          </span>
+                        )}
+
+                        <span className="ml-auto flex shrink-0 items-center gap-3">
+                          <span className="pd-chip">
+                            {s.text}
+                          </span>
+                          {(item.status === "review" || item.status === "done") && (
+                            <span className="hidden text-xs font-medium text-emerald-700 group-hover:inline dark:text-emerald-400">
+                              Review listing →
+                            </span>
+                          )}
                         </span>
                       </button>
                     </li>

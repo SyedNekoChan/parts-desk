@@ -506,6 +506,74 @@
 }
 
   /* ----------------------------------------------------------
+     Compact range bars (title / bullet / description length)
+     ---------------------------------------------------------- */
+
+  .pd-range-track {
+    @apply relative h-1.5 w-full overflow-hidden rounded-full;
+    @apply bg-slate-200 dark:bg-slate-800;
+  }
+
+  .pd-range-fill {
+    @apply h-full rounded-full transition-[width] duration-300 ease-out;
+  }
+
+  .pd-range-fill-ok {
+    @apply bg-gradient-to-r from-emerald-500 to-emerald-400;
+  }
+
+  .pd-range-fill-under {
+    @apply bg-gradient-to-r from-amber-500 to-yellow-400;
+  }
+
+  .pd-range-fill-over {
+    @apply bg-gradient-to-r from-rose-600 to-rose-500;
+  }
+
+  /* ----------------------------------------------------------
+     Document-style section (Listing Editor)
+     ---------------------------------------------------------- */
+
+  .pd-section {
+    @apply border-b border-slate-200/70 py-5 first:pt-0 last:border-b-0 last:pb-0;
+    @apply dark:border-slate-800/70;
+  }
+
+  .pd-section-head {
+    @apply mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1;
+  }
+
+  .pd-section-title {
+    @apply text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500;
+    @apply dark:text-slate-400;
+  }
+
+  /* ----------------------------------------------------------
+     Filter chips (Queue status filters)
+     ---------------------------------------------------------- */
+
+  .pd-filter {
+    @apply flex items-center gap-2 rounded-lg border px-3 py-2 text-left;
+    @apply border-slate-200/80 bg-white/70 transition-all duration-150;
+    @apply dark:border-slate-800/80 dark:bg-slate-900/60;
+  }
+
+  .pd-filter:hover {
+    @apply border-slate-300 bg-slate-50;
+    @apply dark:border-slate-700 dark:bg-slate-900;
+  }
+
+  .pd-filter-active {
+    @apply border-slate-900 bg-slate-900 text-white;
+    @apply dark:border-white dark:bg-white dark:text-slate-950;
+  }
+
+  .pd-filter-active:hover {
+    @apply border-slate-900 bg-slate-900 text-white;
+    @apply dark:border-white dark:bg-white dark:text-slate-950;
+  }
+
+  /* ----------------------------------------------------------
      Queue status indicators
      ---------------------------------------------------------- */
 

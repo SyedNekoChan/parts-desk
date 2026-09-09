@@ -19,7 +19,7 @@ function Field({ label, hint, children, htmlFor }) {
 function Group({ legend, children }) {
   return (
     <fieldset className="mb-6 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-      <legend className="px-1.5 text-[13px] font-semibold text-slate-700 dark:text-slate-300">
+      <legend className="px-1.5 text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">
         {legend}
       </legend>
       {children}

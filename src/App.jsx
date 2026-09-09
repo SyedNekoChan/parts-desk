@@ -290,16 +290,28 @@ export default function App() {
     <div className="min-h-full bg-transparent">
       <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-slate-50/80 backdrop-blur-xl dark:border-slate-800/70 dark:bg-slate-950/75">
         <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-3">
             <span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-500 glow-accent" />
-            <span className="text-sm font-semibold tracking-tight">Parts Desk</span>
+            <div className="leading-tight">
+              <span className="block text-sm font-bold tracking-tight">Parts Desk</span>
+              <span className="hidden text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 sm:block dark:text-slate-500">
+                AI Listing Workstation
+              </span>
+            </div>
           </div>
 
-          <p className="hidden flex-1 text-xs text-slate-500 sm:block dark:text-slate-400">
+          <p className="hidden flex-1 text-xs text-slate-500 lg:block dark:text-slate-400">
             Part numbers in, listing copy out, with the sources it used.
           </p>
 
           <div className="ml-auto flex items-center gap-2">
+  {(settings.apiKeys || []).filter(Boolean).length > 0 && (settings.tavilyKey || "").trim() && (
+    <span className="hidden items-center gap-1.5 pd-chip sm:inline-flex">
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      Engine ready
+    </span>
+  )}
+
   <button
     className="pd-btn pd-btn-xs"
     onClick={() => setShowSettings(true)}
@@ -342,10 +354,15 @@ export default function App() {
   </div>
 
   {activeTab === "builder" ? (
-    <div className="grid gap-6 lg:grid-cols-[23rem_minmax(0,1fr)] lg:gap-7">
+    <div className="grid gap-6 lg:grid-cols-[26rem_minmax(0,1fr)] lg:gap-7">
         {/* Left rail */}
         <div className="lg:sticky lg:top-[4.25rem] lg:self-start">
-          <div className="pd-surface p-4">
+          <div className="pd-surface p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <span className="pd-section-title">New listing batch</span>
+              {queued > 0 && <span className="pd-chip">{queued} queued</span>}
+            </div>
+
             <label className="pd-label" htmlFor="parts">Part numbers</label>
             <textarea
               id="parts"
@@ -377,17 +394,18 @@ export default function App() {
             </div>
 
             <button
-              className={"pd-btn mt-4 w-full " + (running ? "pd-btn-danger" : "pd-btn-primary")}
+              className={"pd-btn mt-4 w-full text-[15px] " + (running ? "pd-btn-danger" : "pd-btn-primary")}
               onClick={run}
             >
-              {running ? "Stop" : queued > 0 ? `Build ${queued} listing${queued === 1 ? "" : "s"}` : "Build listings"}
+              {running ? "Stop" : queued > 0 ? `✨ Build ${queued} listing${queued === 1 ? "" : "s"}` : "✨ Build listings"}
             </button>
             <p className="mt-2 pd-hint">Ctrl/⌘ + Enter also starts a batch.</p>
           </div>
 
           <div className="pd-surface mt-4 p-4">
+            <span className="pd-section-title">Daily output</span>
             <ProgressBar
-              className="mt-4"
+              className="mt-3"
               label="Listings today"
               value={doneToday}
               max={settings.target}
@@ -467,6 +485,7 @@ export default function App() {
       items={items}
       activeId={activeId}
       running={running}
+      settings={settings}
       onSelect={id => {
         setActiveId(id);
         setActiveTab("builder");
