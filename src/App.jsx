@@ -387,13 +387,6 @@ export default function App() {
 
           <div className="pd-surface mt-4 p-4">
             <ProgressBar
-              label="Searches this month"
-              value={tavilyUsed}
-              max={TAVILY_FREE_PER_MONTH}
-              detail={`${tavilyUsed.toLocaleString()} / 1,000`}
-              note="Free tier. Saved searches don't count against this."
-            />
-            <ProgressBar
               className="mt-4"
               label="Listings today"
               value={doneToday}
