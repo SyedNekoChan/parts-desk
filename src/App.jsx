@@ -61,6 +61,7 @@ export default function App() {
   const [parts, setParts] = useState("");
   const [brand, setBrand] = useState("");
   const [condition, setCondition] = useState("New");
+  const [activeTab, setActiveTab] = useState("builder");
 
   const [tally, setTally] = useState(() => readJson(KEYS.tally, { day: localDay(), count: 0 }));
   const [tavily, setTavily] = useState(() => readJson(KEYS.tavilyQuota, { month: localMonth(), count: 0 }));
@@ -299,12 +300,15 @@ export default function App() {
           </p>
 
           <div className="ml-auto flex items-center gap-2">
-            <span className="hidden font-mono text-xs tabular-nums text-slate-500 sm:inline dark:text-slate-400">
-              {doneToday}/{settings.target} today
-            </span>
-            <button className="pd-btn pd-btn-xs" onClick={() => setShowSettings(true)}>Settings</button>
-            <ThemeToggle />
-          </div>
+  <button
+    className="pd-btn pd-btn-xs"
+    onClick={() => setShowSettings(true)}
+  >
+    Settings
+  </button>
+
+  <ThemeToggle />
+</div>
         </div>
       </header>
 
