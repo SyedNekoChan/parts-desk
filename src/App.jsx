@@ -332,6 +332,10 @@ export default function App() {
             </div>
           </div>
 
+          <div className="hidden md:block">
+            <Footer />
+          </div>
+
           <div className="ml-auto flex items-center gap-2">
   <button
     className="pd-btn pd-btn-xs"
@@ -414,10 +418,6 @@ export default function App() {
               live={running}
               detail={`${doneToday} / ${settings.target}`}
             />
-          </div>
-
-          <div className="pb-2">
-            <Footer />
           </div>
         </div>
 

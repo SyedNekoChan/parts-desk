@@ -51,14 +51,21 @@ function Counter({ state, label }) {
    item's default min-width is auto (its content's natural, unwrapped
    width), which silently overrides max-width on the outer box. Setting
    min-w-0 lets the flex algorithm actually honor the cap and wrap the
-   label instead of forcing the box wider than its column. */
+   label instead of forcing the box wider than its column.
+
+   The top line shows just the count and its target (rangeState()'s
+   label with the trailing "— N over/short" clause stripped, purely for
+   display — the underlying value is untouched); the delta appears once,
+   as its own short status line under the bar, instead of twice. */
 function RangeCounter({ r }) {
+  const shortLabel = r.label.replace(/\s*—\s*\d+\s*(over|short)$/, "");
   const statusLabel =
     r.state === "over" ? `⚠ ${r.off} over` : r.state === "under" ? `⚠ ${r.off} short` : "Good";
+
   return (
     <div className="flex min-w-0 max-w-[11rem] flex-1 flex-col items-end gap-1 pl-3">
       <div className="min-w-0 max-w-full">
-        <Counter state={r.state} label={r.label} />
+        <Counter state={r.state} label={shortLabel} />
       </div>
       <RangeBar n={r.n} min={0} max={r.state === "under" ? r.n + r.off : r.n} state={r.state} />
       <span
