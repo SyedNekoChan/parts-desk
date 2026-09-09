@@ -256,11 +256,22 @@
   }
 
   .pd-btn-danger {
-    @apply border-rose-200/80 text-rose-600;
-    @apply hover:border-rose-300 hover:bg-rose-50;
-    @apply dark:border-rose-900/70 dark:text-rose-400;
-    @apply dark:hover:border-rose-800 dark:hover:bg-rose-950/40;
-  }
+  @apply text-rose-600;
+  border-color: rgb(254 205 211 / 0.8);
+}
+
+.pd-btn-danger:hover:not(:disabled) {
+  @apply border-rose-300 bg-rose-50;
+}
+
+.dark .pd-btn-danger {
+  @apply text-rose-400;
+  border-color: rgb(136 19 55 / 0.7);
+}
+
+.dark .pd-btn-danger:hover:not(:disabled) {
+  @apply border-rose-800 bg-rose-950/40;
+}
 
   .pd-btn-xs {
     @apply rounded-md px-2.5 py-1.5 text-xs;
