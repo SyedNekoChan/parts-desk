@@ -360,18 +360,18 @@
 
 .pd-queue-active {
   position: relative;
-  border-color: rgb(var(--accent) / 0.45) !important;
+
+  border-color: rgb(16 185 129 / 0.3) !important;
 
   background:
     linear-gradient(
       90deg,
-      rgb(var(--accent) / 0.07),
+      rgb(16 185 129 / 0.075),
       transparent
     ) !important;
 
   box-shadow:
-    inset 3px 0 0 rgb(var(--accent) / 0.75),
-    0 4px 16px rgb(var(--accent) / 0.07);
+    inset 3px 0 0 rgb(16 185 129 / 0.8);
 }
 
 .pd-queue-item {
@@ -466,7 +466,7 @@
     transition-duration: 0.001ms !important;
   }
 }
-```css
+
 /* ============================================================
    Queue status indicators
    ============================================================ */
