@@ -3,44 +3,102 @@
 @tailwind utilities;
 
 /* ============================================================
-   Base
+   Parts Desk — visual system
    ============================================================ */
 
 @layer base {
   :root {
-    /* Accent lives here rather than in the Tailwind config so the glow
-       utilities below and any inline style can share one source of
-       truth for the colour. */
-    --accent: 16 185 129;        /* emerald-500 */
-    --accent-soft: 52 211 153;   /* emerald-400 */
-    --warn: 234 179 8;           /* yellow-500  */
-    --stop: 244 63 94;           /* rose-500    */
+    --accent: 16 185 129;
+    --accent-soft: 52 211 153;
+    --warn: 234 179 8;
+    --stop: 244 63 94;
+
+    --surface-light: 255 255 255;
+    --surface-dark: 15 23 42;
   }
 
   html {
     -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
   }
 
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply min-h-full bg-slate-50 text-slate-900 antialiased;
     @apply dark:bg-slate-950 dark:text-slate-100;
+
     font-feature-settings: "cv02", "cv03", "cv04";
+    background-image:
+      radial-gradient(
+        circle at 15% 10%,
+        rgb(var(--accent) / 0.045),
+        transparent 28rem
+      ),
+      radial-gradient(
+        circle at 85% 20%,
+        rgb(59 130 246 / 0.035),
+        transparent 24rem
+      );
   }
 
-  /* One visible focus treatment for everything interactive. Browsers
-     draw a default ring, but it disappears against dark backgrounds,
-     and losing keyboard focus visibility is the fastest way to make a
-     tool like this unusable without a mouse. */
-  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  .dark body {
+    background-image:
+      radial-gradient(
+        circle at 15% 5%,
+        rgb(var(--accent) / 0.075),
+        transparent 30rem
+      ),
+      radial-gradient(
+        circle at 90% 15%,
+        rgb(59 130 246 / 0.06),
+        transparent 26rem
+      );
+  }
+
+  /* Subtle technical grid in the application background. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+
+    background-image:
+      linear-gradient(rgb(15 23 42 / 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(15 23 42 / 0.025) 1px, transparent 1px);
+
+    background-size: 28px 28px;
+  }
+
+  .dark body::before {
+    background-image:
+      linear-gradient(rgb(148 163 184 / 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(148 163 184 / 0.025) 1px, transparent 1px);
+  }
+
+  :where(
+    a,
+    button,
+    input,
+    select,
+    textarea,
+    summary,
+    [tabindex]
+  ):focus-visible {
     @apply outline-none ring-2 ring-emerald-500/70 ring-offset-2;
     @apply ring-offset-slate-50 dark:ring-offset-slate-950;
   }
 
-  /* Tabular figures everywhere a number changes in place, so counters
-     and character counts don't jitter as digits change width. */
   .tnum {
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum";
+  }
+
+  ::selection {
+    @apply bg-emerald-500/20 text-emerald-950;
+  }
+
+  .dark ::selection {
+    @apply bg-emerald-400/20 text-emerald-100;
   }
 }
 
@@ -49,107 +107,310 @@
    ============================================================ */
 
 @layer components {
+
+  /* ---------- surfaces ---------- */
+
   .pd-surface {
-    @apply bg-white border border-slate-200 rounded-xl;
-    @apply dark:bg-slate-900 dark:border-slate-800;
+    @apply relative overflow-hidden rounded-2xl;
+    @apply border border-slate-200/80 bg-white/90;
+    @apply dark:border-slate-800/80 dark:bg-slate-900/85;
+
+    box-shadow:
+      0 1px 2px rgb(15 23 42 / 0.035),
+      0 8px 24px rgb(15 23 42 / 0.045);
+
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+
+    transition:
+      border-color 180ms ease,
+      box-shadow 180ms ease,
+      background-color 180ms ease;
+  }
+
+  .pd-surface:hover {
+    border-color: rgb(148 163 184 / 0.55);
+
+    box-shadow:
+      0 2px 4px rgb(15 23 42 / 0.035),
+      0 14px 34px rgb(15 23 42 / 0.06);
+  }
+
+  .dark .pd-surface:hover {
+    border-color: rgb(71 85 105 / 0.8);
+
+    box-shadow:
+      0 2px 6px rgb(0 0 0 / 0.25),
+      0 16px 36px rgb(0 0 0 / 0.2);
   }
 
   .pd-inset {
-    @apply bg-slate-50 border border-slate-200 rounded-lg;
-    @apply dark:bg-slate-950/60 dark:border-slate-800;
+    @apply rounded-xl border;
+    @apply border-slate-200/80 bg-slate-50/80;
+    @apply dark:border-slate-800 dark:bg-slate-950/70;
   }
+
+  /* ---------- buttons ---------- */
 
   .pd-btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-1.5;
-    @apply text-sm font-medium transition-colors duration-150;
-    @apply border-slate-200 bg-white text-slate-700 hover:bg-slate-100;
-    @apply dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800;
-    @apply disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white;
-    @apply dark:disabled:hover:bg-slate-900;
+    @apply inline-flex items-center justify-center gap-2;
+    @apply rounded-lg border px-3 py-2;
+    @apply text-sm font-medium;
+    @apply transition-all duration-150;
+
+    border-color: rgb(203 213 225 / 0.85);
+    background: rgb(255 255 255 / 0.9);
+    color: rgb(51 65 85);
+
+    box-shadow:
+      0 1px 2px rgb(15 23 42 / 0.035),
+      inset 0 1px 0 rgb(255 255 255 / 0.65);
   }
 
-  /* The one high-contrast action on screen. Deliberately the only place
-     the accent is used as a fill rather than a hairline or a glow. */
+  .pd-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+
+    border-color: rgb(148 163 184 / 0.9);
+    background: rgb(248 250 252);
+    box-shadow:
+      0 3px 8px rgb(15 23 42 / 0.08),
+      inset 0 1px 0 rgb(255 255 255 / 0.8);
+  }
+
+  .pd-btn:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow:
+      0 1px 3px rgb(15 23 42 / 0.06);
+  }
+
+  .dark .pd-btn {
+    border-color: rgb(51 65 85 / 0.9);
+    background: rgb(15 23 42 / 0.82);
+    color: rgb(226 232 240);
+
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.18),
+      inset 0 1px 0 rgb(255 255 255 / 0.025);
+  }
+
+  .dark .pd-btn:hover:not(:disabled) {
+    border-color: rgb(71 85 105);
+    background: rgb(30 41 59);
+    box-shadow:
+      0 5px 16px rgb(0 0 0 / 0.25),
+      inset 0 1px 0 rgb(255 255 255 / 0.035);
+  }
+
   .pd-btn-primary {
     @apply border-transparent bg-emerald-600 text-white;
-    @apply hover:bg-emerald-500 dark:bg-emerald-500 dark:text-slate-950 dark:hover:bg-emerald-400;
-    @apply disabled:hover:bg-emerald-600 dark:disabled:hover:bg-emerald-500;
-    box-shadow: 0 0 0 0 rgb(var(--accent) / 0);
-    transition: box-shadow .2s ease, background-color .15s ease;
+    @apply dark:bg-emerald-500 dark:text-slate-950;
+
+    box-shadow:
+      0 6px 18px rgb(var(--accent) / 0.18),
+      inset 0 1px 0 rgb(255 255 255 / 0.16);
   }
-  .pd-btn-primary:not(:disabled):hover {
-    box-shadow: 0 0 18px -2px rgb(var(--accent) / 0.55);
+
+  .pd-btn-primary:hover:not(:disabled) {
+    @apply bg-emerald-500;
+    @apply dark:bg-emerald-400;
+
+    box-shadow:
+      0 9px 26px rgb(var(--accent) / 0.28),
+      0 0 24px rgb(var(--accent) / 0.18),
+      inset 0 1px 0 rgb(255 255 255 / 0.2);
+  }
+
+  .pd-btn-primary:active:not(:disabled) {
+    box-shadow:
+      0 4px 12px rgb(var(--accent) / 0.2);
   }
 
   .pd-btn-danger {
-    @apply border-rose-200 text-rose-600 hover:bg-rose-50;
-    @apply dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/40;
+    @apply border-rose-200/80 text-rose-600;
+    @apply hover:bg-rose-50 hover:border-rose-300;
+    @apply dark:border-rose-900/70 dark:text-rose-400;
+    @apply dark:hover:bg-rose-950/40 dark:hover:border-rose-800;
   }
 
   .pd-btn-xs {
-    @apply px-2 py-1 text-xs rounded-md;
+    @apply rounded-md px-2.5 py-1.5 text-xs;
   }
 
+  /* ---------- inputs ---------- */
+
   .pd-input {
-    @apply w-full rounded-lg border px-3 py-2 text-sm transition-colors;
-    @apply border-slate-200 bg-white text-slate-900 placeholder:text-slate-400;
-    @apply dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-600;
+    @apply w-full rounded-xl border px-3 py-2.5;
+    @apply text-sm transition-all duration-150;
+
+    border-color: rgb(203 213 225 / 0.9);
+    background: rgb(255 255 255 / 0.88);
+    color: rgb(15 23 42);
+
+    box-shadow:
+      inset 0 1px 2px rgb(15 23 42 / 0.025),
+      0 1px 1px rgb(15 23 42 / 0.015);
+  }
+
+  .pd-input:hover {
+    border-color: rgb(148 163 184);
+  }
+
+  .pd-input:focus {
+    border-color: rgb(var(--accent) / 0.7);
+
+    box-shadow:
+      0 0 0 3px rgb(var(--accent) / 0.11),
+      inset 0 1px 2px rgb(15 23 42 / 0.02);
+  }
+
+  .pd-input::placeholder {
+    color: rgb(148 163 184);
+  }
+
+  .dark .pd-input {
+    border-color: rgb(51 65 85 / 0.9);
+    background: rgb(2 6 23 / 0.72);
+    color: rgb(241 245 249);
+
+    box-shadow:
+      inset 0 1px 2px rgb(0 0 0 / 0.2);
+  }
+
+  .dark .pd-input:hover {
+    border-color: rgb(71 85 105);
+  }
+
+  .dark .pd-input:focus {
+    border-color: rgb(var(--accent) / 0.62);
+
+    box-shadow:
+      0 0 0 3px rgb(var(--accent) / 0.13),
+      inset 0 1px 2px rgb(0 0 0 / 0.18);
   }
 
   .pd-label {
-    @apply block text-[13px] font-semibold text-slate-700 dark:text-slate-300 mb-1.5;
+    @apply mb-1.5 block text-[12px] font-bold uppercase tracking-[0.08em];
+    @apply text-slate-600 dark:text-slate-400;
   }
 
   .pd-hint {
-    @apply text-xs leading-relaxed text-slate-500 dark:text-slate-400;
+    @apply text-xs leading-relaxed text-slate-500;
+    @apply dark:text-slate-500;
   }
 
-  /* Metrics are monospace so digits align down a column and a character
-     count reads as a measurement rather than as prose. */
   .pd-metric {
-    @apply font-mono text-xs tabular-nums text-slate-500 dark:text-slate-400;
+    @apply font-mono text-xs tabular-nums;
+    @apply text-slate-500 dark:text-slate-400;
   }
 
   .pd-chip {
-    @apply inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-xs;
-    @apply border-slate-200 bg-slate-50 text-slate-600;
-    @apply dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300;
+    @apply inline-flex items-center rounded-full border;
+    @apply px-2 py-0.5 font-mono text-[11px] font-medium;
+
+    border-color: rgb(203 213 225 / 0.8);
+    background: rgb(248 250 252);
+    color: rgb(71 85 105);
+  }
+
+  .dark .pd-chip {
+    border-color: rgb(51 65 85 / 0.8);
+    background: rgb(15 23 42 / 0.8);
+    color: rgb(148 163 184);
+  }
+
+  /* ---------- application-specific polish ---------- */
+
+  .pd-surface > header {
+    background: linear-gradient(
+      180deg,
+      rgb(248 250 252 / 0.72),
+      rgb(248 250 252 / 0.25)
+    );
+  }
+
+  .dark .pd-surface > header {
+    background: linear-gradient(
+      180deg,
+      rgb(30 41 59 / 0.55),
+      rgb(15 23 42 / 0.2)
+    );
+  }
+
+  textarea.pd-input {
+    min-height: 8.5rem;
+    line-height: 1.6;
+  }
+
+  textarea.pd-input,
+  input.pd-input,
+  select.pd-input {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Listing editor panel headers */
+  .pd-surface section,
+  .pd-surface article {
+    isolation: isolate;
   }
 }
 
 /* ============================================================
-   Glow
+   Queue / state styling
+   ============================================================ */
 
-   The brief asks for high-tech glowing bars. The restraint that keeps
-   that from looking like a toy: glow is reserved for live state. A bar
-   that is running glows and pulses; a bar that is merely sitting at a
-   value does not. So the glow means "this is moving", which is
-   information, rather than decoration applied to every bar equally.
+.pd-queue-active {
+  position: relative;
+  border-color: rgb(var(--accent) / 0.45) !important;
+
+  background:
+    linear-gradient(
+      90deg,
+      rgb(var(--accent) / 0.07),
+      transparent
+    ) !important;
+
+  box-shadow:
+    inset 3px 0 0 rgb(var(--accent) / 0.75),
+    0 4px 16px rgb(var(--accent) / 0.07);
+}
+
+.pd-queue-item {
+  transition:
+    transform 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.pd-queue-item:hover {
+  transform: translateX(2px);
+}
+
+/* ============================================================
+   Glow
    ============================================================ */
 
 @layer utilities {
   .glow-accent {
     box-shadow:
-      0 0 8px  rgb(var(--accent) / 0.55),
+      0 0 8px rgb(var(--accent) / 0.55),
       0 0 18px rgb(var(--accent) / 0.35),
       inset 0 0 6px rgb(var(--accent-soft) / 0.45);
   }
 
   .glow-warn {
     box-shadow:
-      0 0 8px  rgb(var(--warn) / 0.55),
+      0 0 8px rgb(var(--warn) / 0.55),
       0 0 18px rgb(var(--warn) / 0.30),
       inset 0 0 6px rgb(var(--warn) / 0.40);
   }
 
   .glow-stop {
     box-shadow:
-      0 0 8px  rgb(var(--stop) / 0.55),
+      0 0 8px rgb(var(--stop) / 0.55),
       0 0 18px rgb(var(--stop) / 0.30),
       inset 0 0 6px rgb(var(--stop) / 0.40);
   }
 
-  /* The travelling highlight that rides along an indeterminate bar. */
   .sheen-mask {
     background: linear-gradient(
       90deg,
@@ -160,32 +421,48 @@
   }
 }
 
-/* Anyone who has asked their system to stop moving things gets a static
-   interface. The bars still fill and still change colour — only the
-   looping motion stops, so no information is lost. */
+/* ============================================================
+   Scrollbars
+   ============================================================ */
+
+@supports selector(::-webkit-scrollbar) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300 dark:bg-slate-700;
+
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400 dark:bg-slate-600;
+
+    background-clip: content-box;
+  }
+}
+
+/* ============================================================
+   Reduced motion
+   ============================================================ */
+
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
-  }
-}
-
-/* Scrollbars, so the two scrolling columns don't ship a bright grey
-   default gutter into the dark theme. */
-@supports selector(::-webkit-scrollbar) {
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb {
-    @apply bg-slate-300 dark:bg-slate-700;
-    border-radius: 6px;
-    border: 3px solid transparent;
-    background-clip: content-box;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-slate-400 dark:bg-slate-600;
-    background-clip: content-box;
   }
 }
