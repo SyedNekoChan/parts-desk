@@ -312,7 +312,37 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-[88rem] gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[23rem_minmax(0,1fr)] lg:gap-7">
+      <main className="mx-auto max-w-[88rem] px-4 py-6 sm:px-6">
+
+  <div className="mb-6 flex items-center justify-between">
+    <div className="pd-tabbar">
+      <button
+        type="button"
+        className={"pd-tab " + (activeTab === "builder" ? "pd-tab-active" : "")}
+        onClick={() => setActiveTab("builder")}
+      >
+        <span className="pd-tab-indicator" />
+        Builder
+      </button>
+
+      <button
+        type="button"
+        className={"pd-tab " + (activeTab === "queue" ? "pd-tab-active" : "")}
+        onClick={() => setActiveTab("queue")}
+      >
+        <span className="pd-tab-indicator" />
+        Queue
+        {items.length > 0 && (
+          <span className="pd-tab-count">
+            {items.length}
+          </span>
+        )}
+      </button>
+    </div>
+  </div>
+
+  {activeTab === "builder" ? (
+    <div className="grid gap-6 lg:grid-cols-[23rem_minmax(0,1fr)] lg:gap-7">
         {/* Left rail */}
         <div className="lg:sticky lg:top-[4.25rem] lg:self-start">
           <div className="pd-surface p-4">
@@ -374,16 +404,7 @@ export default function App() {
             />
           </div>
 
-          <QueueManager
-            items={items}
-            activeId={activeId}
-            running={running}
-            onSelect={setActiveId}
-            onClear={clearQueue}
-            onExport={exportCsv}
-          />
-
-          <Footer tavilyUsed={tavilyUsed} tavilyMax={TAVILY_FREE_PER_MONTH} />
+          <Footer />
         </div>
 
         {/* Right pane */}
@@ -447,7 +468,22 @@ export default function App() {
             </div>
           )}
         </div>
-      </main>
+      </div>
+    </div>
+  ) : (
+    <QueueManager
+      items={items}
+      activeId={activeId}
+      running={running}
+      onSelect={id => {
+        setActiveId(id);
+        setActiveTab("builder");
+      }}
+      onClear={clearQueue}
+      onExport={exportCsv}
+    />
+  )}
+</main>
 
       <SettingsDialog
         open={showSettings}
