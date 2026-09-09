@@ -1,4 +1,3 @@
-jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ProgressBar from "./ProgressBar.jsx";
 
