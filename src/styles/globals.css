@@ -3,7 +3,8 @@
 @tailwind utilities;
 
 /* ============================================================
-   Parts Desk — visual system
+   Parts Desk
+   Global visual system
    ============================================================ */
 
 @layer base {
@@ -26,17 +27,21 @@
     @apply min-h-full bg-slate-50 text-slate-900 antialiased;
     @apply dark:bg-slate-950 dark:text-slate-100;
 
-    font-feature-settings: "cv02", "cv03", "cv04";
+    font-feature-settings:
+      "cv02",
+      "cv03",
+      "cv04";
+
     background-image:
       radial-gradient(
-        circle at 15% 10%,
+        circle at 15% 5%,
         rgb(var(--accent) / 0.045),
-        transparent 28rem
+        transparent 30rem
       ),
       radial-gradient(
-        circle at 85% 20%,
+        circle at 85% 15%,
         rgb(59 130 246 / 0.035),
-        transparent 24rem
+        transparent 26rem
       );
   }
 
@@ -45,34 +50,48 @@
       radial-gradient(
         circle at 15% 5%,
         rgb(var(--accent) / 0.075),
-        transparent 30rem
+        transparent 32rem
       ),
       radial-gradient(
         circle at 90% 15%,
-        rgb(59 130 246 / 0.06),
-        transparent 26rem
+        rgb(59 130 246 / 0.055),
+        transparent 28rem
       );
   }
 
-  /* Subtle technical grid in the application background. */
+  /* Subtle technical grid. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
-    pointer-events: none;
     z-index: -1;
+    pointer-events: none;
 
     background-image:
-      linear-gradient(rgb(15 23 42 / 0.025) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(15 23 42 / 0.025) 1px, transparent 1px);
+      linear-gradient(
+        rgb(15 23 42 / 0.022) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        90deg,
+        rgb(15 23 42 / 0.022) 1px,
+        transparent 1px
+      );
 
     background-size: 28px 28px;
   }
 
   .dark body::before {
     background-image:
-      linear-gradient(rgb(148 163 184 / 0.025) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(148 163 184 / 0.025) 1px, transparent 1px);
+      linear-gradient(
+        rgb(148 163 184 / 0.022) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        90deg,
+        rgb(148 163 184 / 0.022) 1px,
+        transparent 1px
+      );
   }
 
   :where(
@@ -107,8 +126,9 @@
    ============================================================ */
 
 @layer components {
-
-  /* ---------- surfaces ---------- */
+  /* ----------------------------------------------------------
+     Surfaces
+     ---------------------------------------------------------- */
 
   .pd-surface {
     @apply relative overflow-hidden rounded-2xl;
@@ -150,7 +170,9 @@
     @apply dark:border-slate-800 dark:bg-slate-950/70;
   }
 
-  /* ---------- buttons ---------- */
+  /* ----------------------------------------------------------
+     Buttons
+     ---------------------------------------------------------- */
 
   .pd-btn {
     @apply inline-flex items-center justify-center gap-2;
@@ -172,6 +194,7 @@
 
     border-color: rgb(148 163 184 / 0.9);
     background: rgb(248 250 252);
+
     box-shadow:
       0 3px 8px rgb(15 23 42 / 0.08),
       inset 0 1px 0 rgb(255 255 255 / 0.8);
@@ -179,8 +202,14 @@
 
   .pd-btn:active:not(:disabled) {
     transform: translateY(0);
+
     box-shadow:
       0 1px 3px rgb(15 23 42 / 0.06);
+  }
+
+  .pd-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
   }
 
   .dark .pd-btn {
@@ -196,6 +225,7 @@
   .dark .pd-btn:hover:not(:disabled) {
     border-color: rgb(71 85 105);
     background: rgb(30 41 59);
+
     box-shadow:
       0 5px 16px rgb(0 0 0 / 0.25),
       inset 0 1px 0 rgb(255 255 255 / 0.035);
@@ -227,16 +257,18 @@
 
   .pd-btn-danger {
     @apply border-rose-200/80 text-rose-600;
-    @apply hover:bg-rose-50 hover:border-rose-300;
+    @apply hover:border-rose-300 hover:bg-rose-50;
     @apply dark:border-rose-900/70 dark:text-rose-400;
-    @apply dark:hover:bg-rose-950/40 dark:hover:border-rose-800;
+    @apply dark:hover:border-rose-800 dark:hover:bg-rose-950/40;
   }
 
   .pd-btn-xs {
     @apply rounded-md px-2.5 py-1.5 text-xs;
   }
 
-  /* ---------- inputs ---------- */
+  /* ----------------------------------------------------------
+     Inputs
+     ---------------------------------------------------------- */
 
   .pd-input {
     @apply w-full rounded-xl border px-3 py-2.5;
@@ -288,6 +320,22 @@
       inset 0 1px 2px rgb(0 0 0 / 0.18);
   }
 
+  textarea.pd-input {
+    min-height: 8.5rem;
+    line-height: 1.6;
+    resize: vertical;
+  }
+
+  input.pd-input,
+  select.pd-input,
+  textarea.pd-input {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ----------------------------------------------------------
+     Labels / hints / metrics
+     ---------------------------------------------------------- */
+
   .pd-label {
     @apply mb-1.5 block text-[12px] font-bold uppercase tracking-[0.08em];
     @apply text-slate-600 dark:text-slate-400;
@@ -318,260 +366,68 @@
     color: rgb(148 163 184);
   }
 
-  /* ---------- application-specific polish ---------- */
+  /* ----------------------------------------------------------
+     Surface header polish
+     ---------------------------------------------------------- */
 
   .pd-surface > header {
-    background: linear-gradient(
-      180deg,
-      rgb(248 250 252 / 0.72),
-      rgb(248 250 252 / 0.25)
-    );
+    background:
+      linear-gradient(
+        180deg,
+        rgb(248 250 252 / 0.72),
+        rgb(248 250 252 / 0.25)
+      );
   }
 
   .dark .pd-surface > header {
-    background: linear-gradient(
-      180deg,
-      rgb(30 41 59 / 0.55),
-      rgb(15 23 42 / 0.2)
-    );
+    background:
+      linear-gradient(
+        180deg,
+        rgb(30 41 59 / 0.55),
+        rgb(15 23 42 / 0.2)
+      );
   }
 
-  textarea.pd-input {
-    min-height: 8.5rem;
-    line-height: 1.6;
-  }
-
-  textarea.pd-input,
-  input.pd-input,
-  select.pd-input {
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* Listing editor panel headers */
   .pd-surface section,
   .pd-surface article {
     isolation: isolate;
   }
-}
 
-/* ============================================================
-   Queue / state styling
-   ============================================================ */
+  /* ----------------------------------------------------------
+     Queue item styling
+     ---------------------------------------------------------- */
 
-.pd-queue-active {
-  position: relative;
+  .pd-queue-item {
+    transition:
+      transform 150ms ease,
+      background-color 150ms ease,
+      border-color 150ms ease,
+      box-shadow 150ms ease;
+  }
 
-  border-color: rgb(16 185 129 / 0.3) !important;
+  .pd-queue-item:hover {
+    transform: translateX(2px);
+  }
 
-  background:
-    linear-gradient(
-      90deg,
-      rgb(16 185 129 / 0.075),
-      transparent
-    ) !important;
+  .pd-queue-active {
+    position: relative;
 
-  box-shadow:
-    inset 3px 0 0 rgb(16 185 129 / 0.8);
-}
+    border-color: rgb(var(--accent) / 0.3) !important;
 
-.pd-queue-item {
-  transition:
-    transform 150ms ease,
-    background-color 150ms ease,
-    border-color 150ms ease;
-}
+    background:
+      linear-gradient(
+        90deg,
+        rgb(var(--accent) / 0.075),
+        transparent
+      ) !important;
 
-.pd-queue-item:hover {
-  transform: translateX(2px);
-}
-
-/* ============================================================
-   Glow
-   ============================================================ */
-
-@layer utilities {
-  .glow-accent {
     box-shadow:
-      0 0 8px rgb(var(--accent) / 0.55),
-      0 0 18px rgb(var(--accent) / 0.35),
-      inset 0 0 6px rgb(var(--accent-soft) / 0.45);
+      inset 3px 0 0 rgb(var(--accent) / 0.8);
   }
 
-  .glow-warn {
-    box-shadow:
-      0 0 8px rgb(var(--warn) / 0.55),
-      0 0 18px rgb(var(--warn) / 0.30),
-      inset 0 0 6px rgb(var(--warn) / 0.40);
-  }
-
-  .glow-stop {
-    box-shadow:
-      0 0 8px rgb(var(--stop) / 0.55),
-      0 0 18px rgb(var(--stop) / 0.30),
-      inset 0 0 6px rgb(var(--stop) / 0.40);
-  }
-
-  .sheen-mask {
-    background: linear-gradient(
-      90deg,
-      transparent,
-      rgb(255 255 255 / 0.55),
-      transparent
-    );
-  }
-}
-
-/* ============================================================
-   Scrollbars
-   ============================================================ */
-
-@supports selector(::-webkit-scrollbar) {
-  ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    @apply rounded-full bg-slate-300 dark:bg-slate-700;
-
-    border: 3px solid transparent;
-    background-clip: content-box;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-slate-400 dark:bg-slate-600;
-
-    background-clip: content-box;
-  }
-}
-
-/* ============================================================
-   Reduced motion
-   ============================================================ */
-
-@media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-  }
-}
-
-/* ============================================================
-   Queue status indicators
-   ============================================================ */
-
-@layer components {
-  .pd-status-dot {
-    @apply relative block h-3 w-3 rounded-full;
-    flex: 0 0 auto;
-  }
-
-  .pd-status-dot::before {
-    content: "";
-    position: absolute;
-    inset: -5px;
-    border-radius: 9999px;
-    opacity: 0.55;
-  }
-
-  .pd-status-dot::after {
-    content: "";
-    position: absolute;
-    inset: -7px;
-    border-radius: 9999px;
-    border: 1px solid currentColor;
-    opacity: 0;
-  }
-
-  /* Waiting — cool blue, slow pulse */
-  .pd-status-queued {
-    color: rgb(96 165 250);
-    background: rgb(59 130 246);
-    box-shadow:
-      0 0 5px rgb(59 130 246 / 0.8),
-      0 0 14px rgb(59 130 246 / 0.5);
-    animation: pd-status-queued 2.8s ease-in-out infinite;
-  }
-
-  .pd-status-queued::before {
-    background: rgb(59 130 246 / 0.26);
-    animation: pd-status-ring 2.8s ease-out infinite;
-  }
-
-  /* Working — amber, faster pulse */
-  .pd-status-running {
-    color: rgb(251 191 36);
-    background: rgb(245 158 11);
-    box-shadow:
-      0 0 6px rgb(245 158 11 / 0.95),
-      0 0 18px rgb(245 158 11 / 0.7),
-      0 0 30px rgb(245 158 11 / 0.3);
-    animation: pd-status-running 1.05s ease-in-out infinite;
-  }
-
-  .pd-status-running::before {
-    background: rgb(245 158 11 / 0.3);
-    animation: pd-status-ring 1.05s ease-out infinite;
-  }
-
-  /* Ready — emerald, calm heartbeat */
-  .pd-status-done {
-    color: rgb(52 211 153);
-    background: rgb(16 185 129);
-    box-shadow:
-      0 0 5px rgb(16 185 129 / 0.85),
-      0 0 15px rgb(16 185 129 / 0.5);
-    animation: pd-status-done 2.1s ease-in-out infinite;
-  }
-
-  .pd-status-done::before {
-    background: rgb(16 185 129 / 0.22);
-    animation: pd-status-ring 2.1s ease-out infinite;
-  }
-
-  /* Review — purple, attention pulse */
-  .pd-status-review {
-    color: rgb(192 132 252);
-    background: rgb(168 85 247);
-    box-shadow:
-      0 0 6px rgb(168 85 247 / 0.9),
-      0 0 18px rgb(168 85 247 / 0.55);
-    animation: pd-status-review 1.55s ease-in-out infinite;
-  }
-
-  .pd-status-review::before {
-    background: rgb(168 85 247 / 0.28);
-    animation: pd-status-ring 1.55s ease-out infinite;
-  }
-
-  /* Failed — red, urgent flash */
-  .pd-status-error {
-    color: rgb(251 113 133);
-    background: rgb(244 63 94);
-    box-shadow:
-      0 0 7px rgb(244 63 94 / 0.95),
-      0 0 20px rgb(244 63 94 / 0.6),
-      0 0 32px rgb(244 63 94 / 0.25);
-    animation: pd-status-error 0.9s ease-in-out infinite;
-  }
-
-  .pd-status-error::before {
-    background: rgb(244 63 94 / 0.32);
-    animation: pd-status-ring 0.9s ease-out infinite;
-  }
-
-  /* ---------- tab navigation ---------- */
+  /* ----------------------------------------------------------
+     Tabs
+     ---------------------------------------------------------- */
 
   .pd-tabbar {
     @apply flex items-center gap-1 rounded-xl border p-1;
@@ -580,6 +436,9 @@
 
     box-shadow:
       0 2px 8px rgb(15 23 42 / 0.04);
+
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 
   .pd-tab {
@@ -615,7 +474,7 @@
     @apply bg-emerald-400;
 
     box-shadow:
-      0 0 7px rgb(52 211 153 / 0.8);
+      0 0 7px rgb(var(--accent-soft) / 0.85);
   }
 
   .pd-tab-count {
@@ -629,10 +488,234 @@
     @apply bg-white/15 text-white;
     @apply dark:bg-slate-900/10 dark:text-slate-900;
   }
+
+  /* ----------------------------------------------------------
+     Queue status indicators
+     ---------------------------------------------------------- */
+
+  .pd-status-dot {
+    @apply relative block h-3 w-3 rounded-full;
+
+    flex: 0 0 auto;
+    isolation: isolate;
+  }
+
+  .pd-status-dot::before,
+  .pd-status-dot::after {
+    content: "";
+    position: absolute;
+    border-radius: 9999px;
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  /* Soft halo. */
+  .pd-status-dot::before {
+    inset: -5px;
+    opacity: 0.55;
+  }
+
+  /* Expanding ring. */
+  .pd-status-dot::after {
+    inset: -6px;
+
+    border: 1px solid currentColor;
+    opacity: 0;
+
+    animation:
+      pd-status-ring 2s ease-out infinite;
+  }
+
+  /* Waiting — blue / calm pulse. */
+  .pd-status-queued {
+    color: rgb(96 165 250);
+    background: rgb(59 130 246);
+
+    box-shadow:
+      0 0 5px rgb(59 130 246 / 0.8),
+      0 0 14px rgb(59 130 246 / 0.5);
+
+    animation:
+      pd-status-queued 2.8s ease-in-out infinite;
+  }
+
+  .pd-status-queued::before {
+    background: rgb(59 130 246 / 0.26);
+
+    animation:
+      pd-status-ring 2.8s ease-out infinite;
+  }
+
+  .pd-status-queued::after {
+    animation-duration: 2.8s;
+  }
+
+  /* Working — amber / fast pulse. */
+  .pd-status-running {
+    color: rgb(251 191 36);
+    background: rgb(245 158 11);
+
+    box-shadow:
+      0 0 6px rgb(245 158 11 / 0.95),
+      0 0 18px rgb(245 158 11 / 0.7),
+      0 0 30px rgb(245 158 11 / 0.3);
+
+    animation:
+      pd-status-running 1.05s ease-in-out infinite;
+  }
+
+  .pd-status-running::before {
+    background: rgb(245 158 11 / 0.3);
+
+    animation:
+      pd-status-ring 1.05s ease-out infinite;
+  }
+
+  .pd-status-running::after {
+    animation-duration: 1.05s;
+  }
+
+  /* Ready — green / gentle heartbeat. */
+  .pd-status-done {
+    color: rgb(52 211 153);
+    background: rgb(var(--accent));
+
+    box-shadow:
+      0 0 5px rgb(var(--accent) / 0.85),
+      0 0 15px rgb(var(--accent) / 0.5);
+
+    animation:
+      pd-status-done 2.1s ease-in-out infinite;
+  }
+
+  .pd-status-done::before {
+    background: rgb(var(--accent) / 0.22);
+
+    animation:
+      pd-status-ring 2.1s ease-out infinite;
+  }
+
+  .pd-status-done::after {
+    animation-duration: 2.1s;
+  }
+
+  /* Review — purple / attention pulse. */
+  .pd-status-review {
+    color: rgb(192 132 252);
+    background: rgb(168 85 247);
+
+    box-shadow:
+      0 0 6px rgb(168 85 247 / 0.9),
+      0 0 18px rgb(168 85 247 / 0.55);
+
+    animation:
+      pd-status-review 1.55s ease-in-out infinite;
+  }
+
+  .pd-status-review::before {
+    background: rgb(168 85 247 / 0.28);
+
+    animation:
+      pd-status-ring 1.55s ease-out infinite;
+  }
+
+  .pd-status-review::after {
+    animation-duration: 1.55s;
+  }
+
+  /* Failed — red / urgent pulse. */
+  .pd-status-error {
+    color: rgb(251 113 133);
+    background: rgb(var(--stop));
+
+    box-shadow:
+      0 0 7px rgb(var(--stop) / 0.95),
+      0 0 20px rgb(var(--stop) / 0.6),
+      0 0 32px rgb(var(--stop) / 0.25);
+
+    animation:
+      pd-status-error 0.9s ease-in-out infinite;
+  }
+
+  .pd-status-error::before {
+    background: rgb(var(--stop) / 0.32);
+
+    animation:
+      pd-status-ring 0.9s ease-out infinite;
+  }
+
+  .pd-status-error::after {
+    animation-duration: 0.9s;
+  }
 }
 
 /* ============================================================
-   Queue status animations
+   Utilities
+   ============================================================ */
+
+@layer utilities {
+  .glow-accent {
+    box-shadow:
+      0 0 8px rgb(var(--accent) / 0.55),
+      0 0 18px rgb(var(--accent) / 0.35),
+      inset 0 0 6px rgb(var(--accent-soft) / 0.45);
+  }
+
+  .glow-warn {
+    box-shadow:
+      0 0 8px rgb(var(--warn) / 0.55),
+      0 0 18px rgb(var(--warn) / 0.3),
+      inset 0 0 6px rgb(var(--warn) / 0.4);
+  }
+
+  .glow-stop {
+    box-shadow:
+      0 0 8px rgb(var(--stop) / 0.55),
+      0 0 18px rgb(var(--stop) / 0.3),
+      inset 0 0 6px rgb(var(--stop) / 0.4);
+  }
+
+  .sheen-mask {
+    background:
+      linear-gradient(
+        90deg,
+        transparent,
+        rgb(255 255 255 / 0.55),
+        transparent
+      );
+  }
+}
+
+/* ============================================================
+   Scrollbars
+   ============================================================ */
+
+@supports selector(::-webkit-scrollbar) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300 dark:bg-slate-700;
+
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400 dark:bg-slate-600;
+
+    background-clip: content-box;
+  }
+}
+
+/* ============================================================
+   Animations
    ============================================================ */
 
 @keyframes pd-status-ring {
@@ -724,5 +807,23 @@
   75% {
     opacity: 1;
     transform: scale(1.08);
+  }
+}
+
+/* ============================================================
+   Reduced motion
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }
