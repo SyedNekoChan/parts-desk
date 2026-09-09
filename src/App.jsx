@@ -286,8 +286,8 @@ export default function App() {
   const queued = parsePartNumbers(parts).length;
 
   return (
-    <div className="min-h-full">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-slate-50/85 backdrop-blur dark:border-slate-800 dark:bg-slate-950/85">
+    <div className="min-h-full bg-transparent">
+      <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-slate-50/80 backdrop-blur-xl dark:border-slate-800/70 dark:bg-slate-950/75">
         <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-2.5">
             <span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-500 glow-accent" />
@@ -308,7 +308,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[22rem_1fr]">
+      <main className="mx-auto grid max-w-[88rem] gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[23rem_minmax(0,1fr)] lg:gap-7">
         {/* Left rail */}
         <div className="lg:sticky lg:top-[4.25rem] lg:self-start">
           <div className="pd-surface p-4">
