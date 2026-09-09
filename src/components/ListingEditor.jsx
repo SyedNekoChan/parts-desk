@@ -115,12 +115,25 @@ function Badge({ tone, children }) {
   );
 }
 
+function CopyButton({ copiedKey, activeKey, onClick, children = "Copy" }) {
+  const isCopied = copiedKey === activeKey;
+  return (
+    <button
+      className={"pd-btn pd-btn-xs " + (isCopied ? "!border-emerald-300 !text-emerald-700 dark:!border-emerald-800 dark:!text-emerald-400" : "")}
+      onClick={onClick}
+    >
+      {isCopied ? "✓ Copied" : children}
+    </button>
+  );
+}
+
 /* ---------- editor ---------- */
 
 export default function ListingEditor({ item, settings, onChange, onRerun, onToast, running }) {
   const d = item.data;
   const [fitting, setFitting] = useState(null);
   const [view, setView] = useState("edit"); // presentation-only toggle, not persisted
+  const [copiedKey, setCopiedKey] = useState(null); // which Copy button last succeeded, briefly
 
   const titleR = rangeState(d.title, settings.titleMin, settings.titleMax);
   const descR = rangeState(d.description, settings.descMin, settings.descMax);
@@ -133,10 +146,16 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     patch({ bullets });
   };
 
-  const copy = async (text, what) => {
+  const copiedTimer = useRef(null);
+  const copy = async (text, what, key) => {
     try {
       await navigator.clipboard.writeText(text);
       onToast(`${what} copied.`);
+      if (key) {
+        setCopiedKey(key);
+        clearTimeout(copiedTimer.current);
+        copiedTimer.current = setTimeout(() => setCopiedKey(null), 1800);
+      }
     } catch {
       onToast("Couldn't reach the clipboard — select and copy by hand.");
     }
@@ -297,8 +316,8 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
 
       {/* ---------- Actions ---------- */}
       <div className="mb-5 flex flex-wrap items-center gap-2">
-        <button className="pd-btn pd-btn-primary" onClick={() => copy(wholeListing, "Listing")}>
-          Copy the whole listing
+        <button className="pd-btn pd-btn-primary" onClick={() => copy(wholeListing, "Listing", "whole")}>
+          {copiedKey === "whole" ? "✓ Copied" : "Copy the whole listing"}
         </button>
         <button className="pd-btn" onClick={() => onRerun(item, false)} disabled={running}>
           Run it again
@@ -333,7 +352,7 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
             title="Title"
             meta={<RangeCounter r={titleR} />}
             action={
-              <button className="pd-btn pd-btn-xs" onClick={() => copy(d.title, "Title")}>Copy</button>
+              <CopyButton copiedKey={copiedKey} activeKey="title" onClick={() => copy(d.title, "Title", "title")} />
             }
           >
             <AutoTextarea value={d.title} onChange={v => patch({ title: v })} aria-label="Listing title" />
@@ -343,9 +362,11 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
             title="Bullet points"
             meta={<span className="pd-metric">{settings.bulletMin}–{settings.bulletMax} each</span>}
             action={
-              <button className="pd-btn pd-btn-xs" onClick={() => copy(d.bullets.filter(Boolean).join("\n"), "Bullets")}>
-                Copy
-              </button>
+              <CopyButton
+                copiedKey={copiedKey}
+                activeKey="bullets"
+                onClick={() => copy(d.bullets.filter(Boolean).join("\n"), "Bullets", "bullets")}
+              />
             }
           >
             <ul className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -393,7 +414,7 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
                     {fitting === "description" ? "Fitting…" : "Fit to range"}
                   </button>
                 )}
-                <button className="pd-btn pd-btn-xs" onClick={() => copy(d.description, "Description")}>Copy</button>
+                <CopyButton copiedKey={copiedKey} activeKey="description" onClick={() => copy(d.description, "Description", "description")} />
               </>
             }
           >
@@ -409,12 +430,11 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
             <Section
               title="Specifications"
               action={
-                <button
-                  className="pd-btn pd-btn-xs"
-                  onClick={() => copy(d.specs.map(s => `${s.label}: ${s.value}`).join("\n"), "Specs")}
-                >
-                  Copy
-                </button>
+                <CopyButton
+                  copiedKey={copiedKey}
+                  activeKey="specs"
+                  onClick={() => copy(d.specs.map(s => `${s.label}: ${s.value}`).join("\n"), "Specs", "specs")}
+                />
               }
             >
               <table className="w-full text-sm">

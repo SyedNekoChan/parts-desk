@@ -426,10 +426,10 @@ export default function App() {
           {!active ? (
             <div className="pd-surface flex min-h-[60vh] items-center justify-center p-8 text-center">
               <div className="max-w-sm">
-                <h2 className="text-lg font-semibold">Nothing selected</h2>
+                <h2 className="text-sm font-bold uppercase tracking-[0.1em] text-slate-800 dark:text-slate-100">Nothing selected</h2>
                 <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-                  Paste part numbers on the left and build a batch. Finished listings
-                  open here for editing, with the sources they were written from.
+                  Add part numbers on the left to start a batch. Finished listings
+                  open here for editing, with the sources they were built from.
                 </p>
               </div>
             </div>
