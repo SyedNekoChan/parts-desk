@@ -135,11 +135,11 @@ export default function QueueManager({
                   onClick={() => onSelect(item.id)}
                   aria-current={active ? "true" : undefined}
                   className={
-                    "flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors " +
-                    (active
-                      ? "border-slate-300 bg-slate-100 dark:border-slate-700 dark:bg-slate-800"
-                      : "border-transparent hover:bg-slate-100 dark:hover:bg-slate-800/60")
-                  }
+  "pd-queue-item flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left " +
+  (active
+    ? "pd-queue-active"
+    : "border-transparent hover:border-slate-200 hover:bg-slate-50 dark:hover:border-slate-800 dark:hover:bg-slate-900/70")
+}
                 >
                   <span className={"h-2 w-2 shrink-0 rounded-full " + s.dot} aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-slate-700 dark:text-slate-200">
