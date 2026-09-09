@@ -466,3 +466,263 @@
     transition-duration: 0.001ms !important;
   }
 }
+```css
+/* ============================================================
+   Queue status indicators
+   ============================================================ */
+
+@layer components {
+  .pd-status-dot {
+    @apply relative block h-3 w-3 rounded-full;
+    flex: 0 0 auto;
+  }
+
+  .pd-status-dot::before {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    border-radius: 9999px;
+    opacity: 0.55;
+  }
+
+  .pd-status-dot::after {
+    content: "";
+    position: absolute;
+    inset: -7px;
+    border-radius: 9999px;
+    border: 1px solid currentColor;
+    opacity: 0;
+  }
+
+  /* Waiting — cool blue, slow pulse */
+  .pd-status-queued {
+    color: rgb(96 165 250);
+    background: rgb(59 130 246);
+    box-shadow:
+      0 0 5px rgb(59 130 246 / 0.8),
+      0 0 14px rgb(59 130 246 / 0.5);
+    animation: pd-status-queued 2.8s ease-in-out infinite;
+  }
+
+  .pd-status-queued::before {
+    background: rgb(59 130 246 / 0.26);
+    animation: pd-status-ring 2.8s ease-out infinite;
+  }
+
+  /* Working — amber, faster pulse */
+  .pd-status-running {
+    color: rgb(251 191 36);
+    background: rgb(245 158 11);
+    box-shadow:
+      0 0 6px rgb(245 158 11 / 0.95),
+      0 0 18px rgb(245 158 11 / 0.7),
+      0 0 30px rgb(245 158 11 / 0.3);
+    animation: pd-status-running 1.05s ease-in-out infinite;
+  }
+
+  .pd-status-running::before {
+    background: rgb(245 158 11 / 0.3);
+    animation: pd-status-ring 1.05s ease-out infinite;
+  }
+
+  /* Ready — emerald, calm heartbeat */
+  .pd-status-done {
+    color: rgb(52 211 153);
+    background: rgb(16 185 129);
+    box-shadow:
+      0 0 5px rgb(16 185 129 / 0.85),
+      0 0 15px rgb(16 185 129 / 0.5);
+    animation: pd-status-done 2.1s ease-in-out infinite;
+  }
+
+  .pd-status-done::before {
+    background: rgb(16 185 129 / 0.22);
+    animation: pd-status-ring 2.1s ease-out infinite;
+  }
+
+  /* Review — purple, attention pulse */
+  .pd-status-review {
+    color: rgb(192 132 252);
+    background: rgb(168 85 247);
+    box-shadow:
+      0 0 6px rgb(168 85 247 / 0.9),
+      0 0 18px rgb(168 85 247 / 0.55);
+    animation: pd-status-review 1.55s ease-in-out infinite;
+  }
+
+  .pd-status-review::before {
+    background: rgb(168 85 247 / 0.28);
+    animation: pd-status-ring 1.55s ease-out infinite;
+  }
+
+  /* Failed — red, urgent flash */
+  .pd-status-error {
+    color: rgb(251 113 133);
+    background: rgb(244 63 94);
+    box-shadow:
+      0 0 7px rgb(244 63 94 / 0.95),
+      0 0 20px rgb(244 63 94 / 0.6),
+      0 0 32px rgb(244 63 94 / 0.25);
+    animation: pd-status-error 0.9s ease-in-out infinite;
+  }
+
+  .pd-status-error::before {
+    background: rgb(244 63 94 / 0.32);
+    animation: pd-status-ring 0.9s ease-out infinite;
+  }
+
+  /* ---------- tab navigation ---------- */
+
+  .pd-tabbar {
+    @apply flex items-center gap-1 rounded-xl border p-1;
+    @apply border-slate-200/80 bg-white/80;
+    @apply dark:border-slate-800/80 dark:bg-slate-900/80;
+
+    box-shadow:
+      0 2px 8px rgb(15 23 42 / 0.04);
+  }
+
+  .pd-tab {
+    @apply relative inline-flex items-center gap-2 rounded-lg px-4 py-2;
+    @apply text-sm font-semibold text-slate-500;
+    @apply transition-all duration-150;
+    @apply dark:text-slate-400;
+  }
+
+  .pd-tab:hover {
+    @apply bg-slate-100 text-slate-700;
+    @apply dark:bg-slate-800 dark:text-slate-200;
+  }
+
+  .pd-tab-active {
+    @apply bg-slate-900 text-white;
+    @apply dark:bg-white dark:text-slate-950;
+
+    box-shadow:
+      0 2px 8px rgb(15 23 42 / 0.12);
+  }
+
+  .pd-tab-active:hover {
+    @apply bg-slate-900 text-white;
+    @apply dark:bg-white dark:text-slate-950;
+  }
+
+  .pd-tab-indicator {
+    @apply h-1.5 w-1.5 rounded-full bg-slate-400;
+  }
+
+  .pd-tab-active .pd-tab-indicator {
+    @apply bg-emerald-400;
+
+    box-shadow:
+      0 0 7px rgb(52 211 153 / 0.8);
+  }
+
+  .pd-tab-count {
+    @apply min-w-[1.25rem] rounded-full px-1.5 py-0.5;
+    @apply text-center font-mono text-[10px] leading-none;
+    @apply bg-slate-200 text-slate-600;
+    @apply dark:bg-slate-800 dark:text-slate-300;
+  }
+
+  .pd-tab-active .pd-tab-count {
+    @apply bg-white/15 text-white;
+    @apply dark:bg-slate-900/10 dark:text-slate-900;
+  }
+}
+
+/* ============================================================
+   Queue status animations
+   ============================================================ */
+
+@keyframes pd-status-ring {
+  0% {
+    transform: scale(0.65);
+    opacity: 0.55;
+  }
+
+  70% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+
+@keyframes pd-status-queued {
+  0%,
+  100% {
+    opacity: 0.65;
+    transform: scale(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pd-status-running {
+  0%,
+  100% {
+    opacity: 0.65;
+    transform: scale(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes pd-status-done {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(0.94);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pd-status-review {
+  0%,
+  100% {
+    opacity: 0.65;
+    transform: scale(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes pd-status-error {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.88);
+  }
+
+  25% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+
+  50% {
+    opacity: 0.6;
+    transform: scale(0.95);
+  }
+
+  75% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
