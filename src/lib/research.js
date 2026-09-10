@@ -13,21 +13,40 @@ import { MAX_PART_LENGTH } from "./settings.js";
    bullets and a 2,000-char description — roughly 800 tokens before
    specs, compatibility and warnings. A ceiling too low truncates the
    JSON mid-string and surfaces as "the listing came back unreadable",
-   which looks like a model fault and isn't one. */
-const MAX_TOKENS = 2600;
+   which looks like a model fault and isn't one.
+
+   Settings allow the length maxes to go well above the defaults
+   (title/bullet up to 500, description up to 6000), so the budget is
+   derived from the configured maxes rather than fixed, with the old
+   2600 as a floor for the default configuration. */
+function maxTokensFor(settings) {
+  const charsBudget =
+    (settings.titleMax || 200) +
+    5 * (settings.bulletMax || 150) +
+    (settings.descMax || 2000) +
+    600; // specs/compat/alt-parts/warnings/JSON overhead
+  return Math.max(2600, Math.ceil(charsBudget / 3.2)); // ~3.2 chars/token, generous
+}
 
 /* ---------- part number parsing ---------- */
 
 const stripMarker = s => s.trim().replace(/^(?:[-*•]|\d{1,3}[.)])\s+/, "").trim();
 
+/* Dedupe is case-insensitive (matches the queue-wide dedupe and the
+   search-cache key, both of which uppercase before comparing) but the
+   first-seen casing is kept, since that's what the operator typed. */
 export function parsePartNumbers(raw) {
-  return String(raw || "")
-    .split(/[\n,;]+/)
-    .map(stripMarker)
-    .filter(Boolean)
-    .filter(s => s.length <= MAX_PART_LENGTH)
-    .filter((v, i, a) => a.indexOf(v) === i)
-    .slice(0, 60);
+  const seen = new Set();
+  const out = [];
+  for (let s of String(raw || "").split(/[\n,;]+/).map(stripMarker)) {
+    if (!s || s.length > MAX_PART_LENGTH) continue;
+    const key = s.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length >= 60) break;
+  }
+  return out;
 }
 
 /* A single line over ~40 characters is essentially never a real part
@@ -43,6 +62,28 @@ export function oversizedPartCount(raw) {
     .length;
 }
 
+/* ---------- defensive coercion ---------- */
+
+/* Mistral's JSON mode is reliable about types almost always, but "almost
+   always" plus 60-part batches means the rare miss (a string instead of
+   an array, etc.) needs to not crash the pipeline. Applied right after
+   parsing, before anything else touches the object, so every downstream
+   consumer (lengthIssues, refit, normalise) can trust the shape. */
+function coerceShape(d) {
+  if (!d || typeof d !== "object") return {};
+  const out = { ...d };
+  if (!Array.isArray(out.bullets)) out.bullets = [];
+  out.bullets = out.bullets.map(b => (typeof b === "string" ? b : "")).slice(0, 5);
+  while (out.bullets.length < 5) out.bullets.push("");
+  if (!Array.isArray(out.warnings)) out.warnings = out.warnings ? [String(out.warnings)] : [];
+  if (!Array.isArray(out.specs)) out.specs = [];
+  if (!Array.isArray(out.compatibility)) out.compatibility = [];
+  if (!Array.isArray(out.alternate_part_numbers)) out.alternate_part_numbers = [];
+  out.title = typeof out.title === "string" ? out.title : "";
+  out.description = typeof out.description === "string" ? out.description : "";
+  return out;
+}
+
 /* ---------- length repair ---------- */
 
 async function refitCall(d, sources, { settings, signal, onNote }) {
@@ -52,7 +93,7 @@ async function refitCall(d, sources, { settings, signal, onNote }) {
   const { payload } = await callMistral({
     messages: [{ role: "user", content: refitPrompt(d, issues, sources) }],
     temperature: 0.3,
-    max_tokens: MAX_TOKENS,
+    max_tokens: maxTokensFor(settings),
     response_format: { type: "json_object" }
   }, { signal, onNote, settings });
 
@@ -129,7 +170,7 @@ export async function research(part, opts, onNote, signal, { settings, forceFres
     fromCache = true;
     onNote({ text: `Reusing the search saved on ${new Date(hit.at).toLocaleDateString()} — no Tavily credit spent.` });
   } else {
-    if (!tavilyKey) throw new Error("No Tavily key configured. Add one in Settings.");
+    if (!tavilyKey) { const e = new Error("No Tavily key configured. Add one in Settings."); e._fatal = true; throw e; }
     onNote({ text: "Searching for " + part });
     ({ sources } = await tavilySearch(query, tavilyKey, maxResults, signal));
     onNote({ spentCredit: true });
@@ -143,17 +184,22 @@ export async function research(part, opts, onNote, signal, { settings, forceFres
     onNote({ text: `Read ${sources.length} source${sources.length === 1 ? "" : "s"}. Writing the listing.` });
   }
 
+  const maxTokens = maxTokensFor(settings);
   const { payload, model, apiKey } = await callMistral({
     messages: [{ role: "user", content: formatPrompt(part, opts, sources, settings) }],
     temperature: 0.3,
-    max_tokens: MAX_TOKENS,
+    max_tokens: maxTokens,
     response_format: { type: "json_object" }
   }, { signal, onNote: t => onNote({ text: t }), settings });
 
   onNote({ tokens: payload?.usage?.total_tokens, model, apiKey });
 
-  let data = extractJson(textOf(payload).trim());
-  if (!data) throw new Error("The listing came back unreadable. Try running this part number again.");
+  const finishReason = payload?.choices?.[0]?.finish_reason;
+  let data = coerceShape(extractJson(textOf(payload).trim()));
+  if (!Object.keys(data).length) throw new Error("The listing came back unreadable. Try running this part number again.");
+  if (finishReason === "length") {
+    data.warnings = [...(data.warnings || []), "The generated reply was cut off before it finished — some fields may be incomplete or missing. Rerun this part number."];
+  }
 
   // Measure every length rule and repair anything outside its range
   // before the listing is ever shown as finished.
@@ -186,13 +232,27 @@ export function normalise(d, part) {
     .map(x => ({ title: s(x.title), url: s(x.url), content: s(x.content).slice(0, 700) }))
     .filter(x => x.url);
 
+  const modelPn = s(d.part_number);
+  const alternates = arr(d.alternate_part_numbers).map(s).filter(Boolean);
+  // The operator's typed part number is authoritative — a model that
+  // returns a different value (a normalised form, a typo "fix", or a
+  // hallucinated one) never silently overwrites what was actually
+  // searched for. If the model's version differs, keep it visible as
+  // an alternate rather than losing it.
+  if (modelPn && modelPn.toUpperCase() !== String(part).trim().toUpperCase() && !alternates.includes(modelPn)) {
+    alternates.push(modelPn);
+  }
+
   return {
-    part_number: s(d.part_number) || part,
+    part_number: part,
     brand: s(d.brand),
     model: s(d.model),
     product_type: s(d.product_type),
-    identified: d.identified !== false,
-    confidence: ["high", "medium", "low"].includes(d.confidence) ? d.confidence : "medium",
+    // Default toward review, not away from it: an explicit `true` is
+    // required to call a part identified; anything missing, malformed
+    // or falsy is treated as not identified.
+    identified: d.identified === true,
+    confidence: ["high", "medium", "low"].includes(d.confidence) ? d.confidence : "low",
     title: s(d.title),
     bullets: bullets.slice(0, 5),
     description: s(d.description),
@@ -201,7 +261,7 @@ export function normalise(d, part) {
       .map(x => ({ label: s(x.label), value: s(x.value) }))
       .slice(0, 14),
     compatibility: arr(d.compatibility).map(s).filter(Boolean),
-    alternate_part_numbers: arr(d.alternate_part_numbers).map(s).filter(Boolean),
+    alternate_part_numbers: alternates,
     warnings: arr(d.warnings).map(s).filter(Boolean),
     sources,
     queries: arr(d._queries),
