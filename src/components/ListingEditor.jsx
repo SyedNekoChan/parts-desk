@@ -58,71 +58,59 @@ function Counter({ state, label }) {
    display — the underlying value is untouched); the delta appears once,
    as its own short status line under the bar, instead of twice. */
 function RangeCounter({ r }) {
-  const shortLabel = r.label.replace(/\s*—\s*\d+\s*(over|short)$/, "");
+  const parts = r.label.split(" — ");
   const statusLabel =
-    r.state === "over" ? `⚠ ${r.off} over` : r.state === "under" ? `⚠ ${r.off} short` : "Good";
-
+    r.state === "over" ? `${r.off} over the cap`
+      : r.state === "under" ? `${r.off} short of the minimum`
+      : "In range";
   return (
-    <div className="flex min-w-0 max-w-[11rem] shrink-0 flex-col items-end gap-1 px-3">
-      <div className="min-w-0 max-w-full">
-        <Counter state={r.state} label={shortLabel} />
-      </div>
-      <RangeBar n={r.n} min={0} max={r.state === "under" ? r.n + r.off : r.n} state={r.state} />
-      <span
-        className={
-          "text-right text-[10px] font-medium uppercase tracking-wide " +
-          (r.state === "over" ? "text-rose-600 dark:text-rose-400"
-            : r.state === "under" ? "text-amber-600 dark:text-amber-400"
-            : "text-emerald-600 dark:text-emerald-400")
-        }
-      >
+    <div className="flex min-w-0 flex-col items-end gap-0.5">
+      <Counter state={r.state} label={parts[0]} />
+      <RangeBar state={r.state} />
+      <span className={
+        "text-[11px] font-medium " +
+        (r.state === "over" ? "text-rose-600 dark:text-rose-400"
+          : r.state === "under" ? "text-amber-600 dark:text-amber-400"
+          : "text-slate-400 dark:text-slate-500")
+      }>
         {statusLabel}
       </span>
     </div>
   );
 }
 
-/* Document-style section: typography + a divider instead of a nested
-   rounded card. Used for Title / Bullets / Description / Specs / etc.
-   The header wraps onto a second row on narrow widths rather than
-   compressing the divider and meta block into each other. */
 function Section({ title, meta, action, children, className = "" }) {
   return (
-    <section className={"pd-section " + className}>
-      <header className="pd-section-head">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <h3 className="pd-section-title shrink-0">{title}</h3>
-          <span className="h-px min-w-[1.5rem] flex-1 bg-slate-200 dark:bg-slate-800" aria-hidden="true" />
+    <section className={"pd-surface p-4 " + className}>
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+        <span className="pd-section-title">{title}</span>
+        <div className="flex items-center gap-2">
+          {meta}
+          {action}
         </div>
-        {meta}
-        {action && <div className="flex items-center gap-1.5">{action}</div>}
-      </header>
+      </div>
       {children}
     </section>
   );
 }
 
 function Badge({ tone, children }) {
-  const map = {
-    ok: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-400",
-    warn: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-400",
-    bad: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-400"
-  };
-  return (
-    <span className={"inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium " + map[tone]}>
-      {children}
-    </span>
-  );
+  const cls =
+    tone === "ok" ? "pd-badge-ok"
+      : tone === "bad" ? "pd-badge-bad"
+      : "pd-badge-warn";
+  return <span className={"pd-badge " + cls}>{children}</span>;
 }
 
 function CopyButton({ copiedKey, activeKey, onClick, children = "Copy" }) {
-  const isCopied = copiedKey === activeKey;
+  const copied = copiedKey === activeKey;
   return (
     <button
-      className={"pd-btn pd-btn-xs " + (isCopied ? "!border-emerald-300 !text-emerald-700 dark:!border-emerald-800 dark:!text-emerald-400" : "")}
+      type="button"
+      className={"pd-btn pd-btn-xs " + (copied ? "pd-btn-success" : "")}
       onClick={onClick}
     >
-      {isCopied ? "✓ Copied" : children}
+      {copied ? "Copied" : children}
     </button>
   );
 }
@@ -138,7 +126,18 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
   const titleR = rangeState(d.title, settings.titleMin, settings.titleMax);
   const descR = rangeState(d.description, settings.descMin, settings.descMax);
 
-  const patch = updates => onChange({ ...d, ...updates });
+  /* fit() is async and can outlive the render that started it. Both
+     "apply the result" and "check whether the user changed this field
+     while we waited" need the *current* listing data at resolution
+     time, not whatever was captured in the closure when the button was
+     clicked — otherwise an edit made mid-request gets silently
+     overwritten by patch({...staleD, field: out}). A ref kept in sync
+     with the latest item.data gives fit() a live read without needing
+     d in its dependency list. */
+  const dRef = useRef(d);
+  useEffect(() => { dRef.current = d; }, [d]);
+
+  const patch = updates => onChange({ ...dRef.current, ...updates });
 
   const setBullet = (i, v) => {
     const bullets = [...d.bullets];
@@ -161,10 +160,25 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     }
   };
 
-  const fit = async (field, value, min, max, apply) => {
+  /* getCurrent/applyField let one fit() implementation work for both
+     the title/description (plain string fields) and a single bullet
+     (an index into an array) without duplicating the race-safety logic
+     per field type. */
+  const fit = async (field, value, min, max, getCurrent, applyField) => {
     setFitting(field);
     try {
       const out = await refitOne(field, value, min, max, d.sources, settings);
+
+      // If the operator changed this exact field while the rewrite was
+      // in flight, the rewrite was computed against a value that no
+      // longer exists — applying it would silently discard the user's
+      // newer edit. Bail out rather than guess which one should win.
+      if (getCurrent(dRef.current) !== value) {
+        onToast("You edited this field while the rewrite was running, so it was discarded to avoid overwriting your change.");
+        setFitting(null);
+        return;
+      }
+
       /* Accept only a rewrite that actually helped. Replacing a field
          that was 40 characters short with one 200 characters short
          would be worse than leaving it alone, and the operator would
@@ -172,7 +186,10 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
       const before = distanceOutside(value.trim().length, min, max);
       const after = out ? distanceOutside(out.trim().length, min, max) : Infinity;
       if (out && after < before) {
-        apply(out);
+        // Apply against the current listing, not a stale snapshot —
+        // any *other* field the operator touched meanwhile is
+        // preserved because patch() reads dRef.current at call time.
+        applyField(dRef.current, out);
         onToast(after === 0 ? "Fitted." : `Closer — still ${after} characters outside the range.`);
       } else {
         onToast("The rewrite didn't land any closer to the range. Left as it was.");
@@ -183,16 +200,46 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     setFitting(null);
   };
 
+  const fitField = (field, value, min, max) =>
+    fit(field, value, min, max,
+      cur => (field === "title" ? cur.title : cur.description),
+      (cur, out) => onChange({ ...cur, [field]: out }));
+
+  const fitBullet = (i, value, min, max) =>
+    fit(`bullet${i}`, value, min, max,
+      cur => cur.bullets[i] || "",
+      (cur, out) => {
+        const bullets = [...cur.bullets];
+        bullets[i] = out;
+        onChange({ ...cur, bullets });
+      });
+
   const issues = useMemo(() => lengthIssues(d, settings), [d, settings]);
 
   const conf = d.confidence === "high" && d.identified ? ["ok", "HIGH CONFIDENCE"]
     : d.confidence === "low" || !d.identified ? ["bad", "NEEDS CHECKING"]
     : ["warn", "REASONABLY SURE"];
 
+  /* research.js can push describeIssue()-formatted strings into
+     d.warnings when its own refit pass gives up on a field. Those
+     strings describe a specific field's length problem at the moment
+     generation finished — if the operator has since fixed that field
+     (by editing it directly, or via "Fit to range"), the field no
+     longer has that issue, but the stale string would otherwise sit in
+     d.warnings forever with nothing to ever clear it. Recomputing
+     "current" length-shaped warning text on every render and dropping
+     any stored warning that matches a since-resolved issue keeps the
+     displayed list honest without mutating the stored data itself
+     (a warning describing something real — thin sourcing, ambiguous
+     identification — is left untouched). */
+  const currentIssueTexts = useMemo(() => new Set(issues.map(describeIssue)), [issues]);
+  const isStaleLengthWarning = w => /^(Title|Bullet \d|Description) is \d+ characters,/.test(w) && !currentIssueTexts.has(w);
+  const liveWarnings = useMemo(() => d.warnings.filter(w => !isStaleLengthWarning(w)), [d.warnings, currentIssueTexts]);
+
   const flags = [
     !d.identified && "The part number couldn't be pinned to one product with confidence.",
     d.sources.length < 2 && `Only ${d.sources.length} source came back, so nothing corroborates the specs.`,
-    ...d.warnings
+    ...liveWarnings
   ].filter(Boolean);
 
   /* Listing health: a qualitative rollup of checks the app already
@@ -262,81 +309,45 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
                 : "text-rose-600 dark:text-rose-400")
             }
           >
-            {healthPassed} / {health.length}
+            {healthPct}%
           </span>
         </div>
-
-        <div className="pd-range-track mt-2">
-          <div
-            className={
-              "pd-range-fill " +
-              (healthTone === "ok" ? "pd-range-fill-ok" : healthTone === "warn" ? "pd-range-fill-under" : "pd-range-fill-over")
-            }
-            style={{ width: `${healthPct}%` }}
-          />
-        </div>
-
-        <ul className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
-          {health.map((h, i) => (
-            <li key={i} className="flex items-center gap-2">
-              <span className={h.ok ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"} aria-hidden="true">
-                {h.ok ? "✓" : "⚠"}
-              </span>
-              <span className={h.ok ? "text-slate-600 dark:text-slate-300" : "text-slate-800 dark:text-slate-100"}>{h.label}</span>
-            </li>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+          {health.map(h => (
+            <span key={h.label} className={"text-xs " + (h.ok ? "text-slate-500 dark:text-slate-400" : "text-rose-600 dark:text-rose-400 font-medium")}>
+              {h.ok ? "✓" : "✕"} {h.label}
+            </span>
           ))}
-        </ul>
+        </div>
+        {reviewCount > 0 && (
+          <ul className="mt-3 space-y-1 border-t border-slate-200/70 pt-3 text-xs text-slate-600 dark:border-slate-800/70 dark:text-slate-300">
+            {issues.map(describeIssue).map((t, i) => <li key={"i" + i}>• {t}</li>)}
+            {otherFlags.map((t, i) => <li key={"f" + i}>• {t}</li>)}
+          </ul>
+        )}
       </section>
 
-      {/* ---------- Compact review summary ---------- */}
-      {(otherFlags.length > 0 || issues.length > 0) && (
-        <section className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900/60 dark:bg-amber-950/30">
-          <p className="font-semibold text-amber-800 dark:text-amber-300">
-            ⚠ {reviewCount} item{reviewCount === 1 ? "" : "s"} need review
-          </p>
-
-          {issues.length > 0 && (
-            <ul className="mt-2 space-y-1 font-mono text-xs text-amber-900/90 dark:text-amber-200/80">
-              {issues.map((iss, i) => (
-                <li key={i} className="flex items-center justify-between gap-3">
-                  <span>{iss.label}</span>
-                  <span>{iss.n} / {iss.over ? `${iss.max} maximum` : `${iss.min} minimum`}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {otherFlags.length > 0 && (
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-amber-800/90 dark:text-amber-200/80">
-              {otherFlags.map((w, i) => <li key={i}>{w}</li>)}
-            </ul>
-          )}
-        </section>
-      )}
-
-      {/* ---------- Actions ---------- */}
-      <div className="mb-5 flex flex-wrap items-center gap-2">
+      {/* ---------- Action bar ---------- */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <button className="pd-btn pd-btn-primary" onClick={() => copy(wholeListing, "Listing", "whole")}>
-          {copiedKey === "whole" ? "✓ Copied" : "Copy the whole listing"}
+          Copy whole listing
         </button>
         <button className="pd-btn" onClick={() => onRerun(item, false)} disabled={running}>
           Run it again
         </button>
         <button className="pd-btn" onClick={() => onRerun(item, true)} disabled={running}>
-          Search again (1 credit)
+          Search again (spends a credit)
         </button>
 
-        <div className="ml-auto flex overflow-hidden rounded-lg border border-slate-200/80 dark:border-slate-800/80">
+        <div className="ml-auto flex gap-1 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-900">
           <button
-            type="button"
-            className={"px-3 py-1.5 text-xs font-semibold transition-colors " + (view === "edit" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950" : "text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800")}
+            className={"pd-btn pd-btn-xs " + (view === "edit" ? "pd-btn-active" : "")}
             onClick={() => setView("edit")}
           >
             Edit
           </button>
           <button
-            type="button"
-            className={"px-3 py-1.5 text-xs font-semibold transition-colors " + (view === "preview" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950" : "text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800")}
+            className={"pd-btn pd-btn-xs " + (view === "preview" ? "pd-btn-active" : "")}
             onClick={() => setView("preview")}
           >
             Preview
@@ -344,242 +355,161 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
         </div>
       </div>
 
-      {view === "preview" ? (
-        <ListingPreview d={d} />
-      ) : (
-        <div className="pd-surface px-5 sm:px-6">
+      {view === "edit" ? (
+        <div className="space-y-4">
+          {/* ---------- Title ---------- */}
           <Section
             title="Title"
             meta={<RangeCounter r={titleR} />}
-            action={
-              <CopyButton copiedKey={copiedKey} activeKey="title" onClick={() => copy(d.title, "Title", "title")} />
-            }
+            action={<CopyButton copiedKey={copiedKey} activeKey="title" onClick={() => copy(d.title, "Title", "title")} />}
           >
             <AutoTextarea value={d.title} onChange={v => patch({ title: v })} aria-label="Listing title" />
+            <div className="mt-2">
+              <button
+                type="button"
+                className="pd-btn pd-btn-xs"
+                onClick={() => fitField("title", d.title, settings.titleMin, settings.titleMax)}
+                disabled={fitting === "title" || titleR.state === "ok"}
+              >
+                {fitting === "title" ? "Fitting…" : "Fit to range"}
+              </button>
+            </div>
           </Section>
 
+          {/* ---------- Bullets ---------- */}
           <Section
-            title="Bullet points"
-            meta={<span className="pd-metric">{settings.bulletMin}–{settings.bulletMax} each</span>}
+            title="Bullets"
             action={
               <CopyButton
-                copiedKey={copiedKey}
-                activeKey="bullets"
+                copiedKey={copiedKey} activeKey="bullets"
                 onClick={() => copy(d.bullets.filter(Boolean).join("\n"), "Bullets", "bullets")}
               />
             }
           >
-            <ul className="divide-y divide-slate-200 dark:divide-slate-800">
+            <div className="space-y-3">
               {d.bullets.map((b, i) => {
                 const r = rangeState(b, settings.bulletMin, settings.bulletMax);
                 return (
-                  <li key={i} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
-                    <span className="w-4 shrink-0 pt-0.5 font-mono text-xs text-slate-400">{i + 1}</span>
+                  <div key={i} className="border-b border-slate-200/60 pb-3 last:border-0 last:pb-0 dark:border-slate-800/60">
+                    <div className="mb-1 flex items-start justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Bullet {i + 1}</span>
+                      <RangeCounter r={r} />
+                    </div>
                     <AutoTextarea
                       value={b}
                       onChange={v => setBullet(i, v)}
                       aria-label={`Bullet ${i + 1}`}
-                      placeholder="Empty — this bullet didn't come back."
                     />
-                    <span
-                      className="w-24 shrink-0 pt-0.5"
-                      title={
-                        r.state === "over" ? `${r.off} over the ${settings.bulletMax} cap`
-                          : r.state === "under" ? `${r.off} short of the ${settings.bulletMin} minimum`
-                          : `Within ${settings.bulletMin}–${settings.bulletMax}`
-                      }
-                    >
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Counter state={r.state} label={String(r.n)} />
-                      </div>
-                      <RangeBar n={r.n} min={0} max={r.state === "under" ? r.n + r.off : r.n} state={r.state} />
-                    </span>
-                  </li>
+                    <div className="mt-1.5">
+                      <button
+                        type="button"
+                        className="pd-btn pd-btn-xs"
+                        onClick={() => fitBullet(i, b, settings.bulletMin, settings.bulletMax)}
+                        disabled={fitting === `bullet${i}` || r.state === "ok"}
+                      >
+                        {fitting === `bullet${i}` ? "Fitting…" : "Fit to range"}
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
-            </ul>
+            </div>
           </Section>
 
+          {/* ---------- Description ---------- */}
           <Section
             title="Description"
             meta={<RangeCounter r={descR} />}
-            action={
-              <>
-                {descR.state !== "ok" && (
-                  <button
-                    className="pd-btn pd-btn-xs"
-                    disabled={fitting === "description"}
-                    onClick={() => fit("description", d.description, settings.descMin, settings.descMax, v => patch({ description: v }))}
-                  >
-                    {fitting === "description" ? "Fitting…" : "Fit to range"}
-                  </button>
-                )}
-                <CopyButton copiedKey={copiedKey} activeKey="description" onClick={() => copy(d.description, "Description", "description")} />
-              </>
-            }
+            action={<CopyButton copiedKey={copiedKey} activeKey="description" onClick={() => copy(d.description, "Description", "description")} />}
           >
+            <div className="mb-2">
+              {descR.state !== "ok" && (
+                <button
+                  type="button"
+                  className="pd-btn pd-btn-xs"
+                  onClick={() => fitField("description", d.description, settings.descMin, settings.descMax)}
+                  disabled={fitting === "description"}
+                >
+                  {fitting === "description" ? "Fitting…" : "Fit to range"}
+                </button>
+              )}
+            </div>
             <AutoTextarea
               value={d.description}
               onChange={v => patch({ description: v })}
-              aria-label="Product description"
-              className="min-h-[14rem]"
+              aria-label="Listing description"
             />
           </Section>
 
-          {d.specs.length > 0 && (
-            <Section
-              title="Specifications"
-              action={
-                <CopyButton
-                  copiedKey={copiedKey}
-                  activeKey="specs"
-                  onClick={() => copy(d.specs.map(s => `${s.label}: ${s.value}`).join("\n"), "Specs", "specs")}
-                />
-              }
-            >
+          {/* ---------- Specs / Compatibility / Alternates / Sources ---------- */}
+          <Section title="Specs">
+            {d.specs.length ? (
               <table className="w-full text-sm">
-                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                <tbody>
                   {d.specs.map((s, i) => (
-                    <tr key={i}>
-                      <td className="w-1/3 py-2 pr-4 align-top text-slate-500 dark:text-slate-400">{s.label}</td>
-                      <td className="py-2 align-top">{s.value}</td>
+                    <tr key={i} className="border-b border-slate-200/60 last:border-0 dark:border-slate-800/60">
+                      <td className="py-1.5 pr-3 font-medium text-slate-500 dark:text-slate-400">{s.label}</td>
+                      <td className="py-1.5 text-slate-800 dark:text-slate-100">{s.value}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </Section>
-          )}
-
-          {d.compatibility.length > 0 && (
-            <Section title="Compatible with">
-              <div className="flex flex-wrap gap-1.5">
-                {d.compatibility.map((c, i) => <span key={i} className="pd-chip">{c}</span>)}
-              </div>
-            </Section>
-          )}
-
-          {d.alternate_part_numbers.length > 0 && (
-            <Section title="Equivalent part numbers">
-              <div className="flex flex-wrap gap-1.5">
-                {d.alternate_part_numbers.map((c, i) => <span key={i} className="pd-chip">{c}</span>)}
-              </div>
-            </Section>
-          )}
-
-          <Section
-            title="Research evidence"
-            meta={<span className="pd-metric">{d.sources.length} source{d.sources.length === 1 ? "" : "s"}</span>}
-            className="!pb-5"
-          >
-            {d.fromCache && (
-              <p className="mb-3 pd-hint">
-                Built from a saved search rather than a fresh one, so no Tavily credit was spent.
-                Use “Search again” if the sources below look stale or wrong.
-              </p>
+            ) : (
+              <p className="text-sm text-slate-400 dark:text-slate-500">No spec rows.</p>
             )}
+          </Section>
 
-            {d.queries?.length > 0 && (
-              <div className="mb-3 flex flex-wrap gap-1.5">
-                {d.queries.map((q, i) => (
-                  <span key={i} className="pd-chip border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-400">
-                    {q}
-                  </span>
-                ))}
-              </div>
-            )}
+          {(d.compatibility.length > 0 || d.alternate_part_numbers.length > 0) && (
+            <Section title="Compatibility & alternates">
+              {d.compatibility.length > 0 && (
+                <p className="mb-2 text-sm text-slate-700 dark:text-slate-200">
+                  <span className="font-medium text-slate-500 dark:text-slate-400">Compatible with: </span>
+                  {d.compatibility.join(", ")}
+                </p>
+              )}
+              {d.alternate_part_numbers.length > 0 && (
+                <p className="text-sm text-slate-700 dark:text-slate-200">
+                  <span className="font-medium text-slate-500 dark:text-slate-400">Alternate part numbers: </span>
+                  {d.alternate_part_numbers.join(", ")}
+                </p>
+              )}
+            </Section>
+          )}
 
-            {d.sources.length > 0 ? (
-              <ol className="divide-y divide-slate-200 text-sm dark:divide-slate-800">
+          <Section title="Sources">
+            {d.sources.length ? (
+              <ul className="space-y-1.5 text-sm">
                 {d.sources.map((s, i) => {
                   const href = safeUrl(s.url);
                   return (
-                    <li key={i} className="flex gap-3 py-2 first:pt-0">
-                      <span className="w-4 shrink-0 font-mono text-xs text-slate-400">{i + 1}</span>
+                    <li key={i}>
                       {href ? (
-                        <a
+                        
                           href={href}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-emerald-700 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-500 dark:text-emerald-400 dark:decoration-emerald-800"
+                          className="text-sky-600 underline decoration-sky-300 underline-offset-2 hover:text-sky-700 dark:text-sky-400 dark:decoration-sky-700"
                         >
-                          {s.title}
+                          {s.title || href}
                         </a>
                       ) : (
-                        <span className="text-slate-500 dark:text-slate-400">
-                          {s.title} <span className="pd-hint">(link dropped — not a valid web address)</span>
-                        </span>
+                        <span className="text-slate-500 dark:text-slate-400">{s.title || "(unsafe link removed)"}</span>
                       )}
                     </li>
                   );
                 })}
-              </ol>
+              </ul>
             ) : (
-              <p className="pd-hint">
-                {d.searchPerformed
-                  ? "The search ran, but no clean URLs came back. Treat the specs above as less certain than usual."
-                  : "No search was performed for this one. Treat everything above as unverified."}
-              </p>
+              <p className="text-sm text-slate-400 dark:text-slate-500">No sources recorded.</p>
             )}
           </Section>
         </div>
-      )}
-    </div>
-  );
-}
-
-/* ---------- read-only marketplace-style preview ---------- */
-/* Presentation only: renders the same item.data the editor above
-   edits, with no separate state and no new marketplace logic. */
-function ListingPreview({ d }) {
-  return (
-    <div className="pd-surface p-6">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-        {[d.brand, d.model, d.product_type].filter(Boolean).join(" · ") || "Unidentified part"}
-      </p>
-      <h2 className="mt-1 text-xl font-semibold leading-snug text-slate-900 dark:text-slate-50">
-        {d.title || "Untitled listing"}
-      </h2>
-
-      {d.bullets.filter(Boolean).length > 0 && (
-        <ul className="mt-4 space-y-1.5 text-sm text-slate-700 dark:text-slate-200">
-          {d.bullets.filter(Boolean).map((b, i) => (
-            <li key={i} className="flex gap-2">
-              <span className="text-emerald-600 dark:text-emerald-400" aria-hidden="true">•</span>
-              <span>{b}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {d.description && (
-        <p className="mt-5 whitespace-pre-line text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-          {d.description}
-        </p>
-      )}
-
-      {d.specs.length > 0 && (
-        <div className="mt-6">
-          <h3 className="pd-section-title mb-2">Specifications</h3>
-          <table className="w-full text-sm">
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {d.specs.map((s, i) => (
-                <tr key={i}>
-                  <td className="w-1/3 py-1.5 pr-4 align-top text-slate-500 dark:text-slate-400">{s.label}</td>
-                  <td className="py-1.5 align-top">{s.value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {d.compatibility.length > 0 && (
-        <div className="mt-6">
-          <h3 className="pd-section-title mb-2">Compatible with</h3>
-          <div className="flex flex-wrap gap-1.5">
-            {d.compatibility.map((c, i) => <span key={i} className="pd-chip">{c}</span>)}
-          </div>
-        </div>
+      ) : (
+        <Section title="Preview">
+          <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-800 dark:text-slate-100">
+            {wholeListing}
+          </pre>
+        </Section>
       )}
     </div>
   );
