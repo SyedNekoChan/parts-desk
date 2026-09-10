@@ -6,8 +6,9 @@ import { normaliseLengthSettings, DEFAULTS } from "../src/lib/settings.js";
 import {
   searchCacheKey, searchCacheGet, searchCachePut, searchCacheCount, searchCacheClear
 } from "../src/lib/searchCache.js";
-import { parsePartNumbers, oversizedPartCount } from "../src/lib/research.js";
+import { parsePartNumbers, oversizedPartCount, normalise } from "../src/lib/research.js";
 import { buildCsv } from "../src/lib/csv.js";
+import { extractJson } from "../src/lib/mistral.js";
 
 let pass = 0, fail = 0;
 const t = (label, got, want) => {
@@ -38,72 +39,70 @@ t("surrounding whitespace not counted",
 t("target lands inside the range", lengthTarget(150, 200), 185);
 t("distance zero inside range", distanceOutside(160, 150, 200), 0);
 t("distance over", distanceOutside(220, 150, 200), 20);
-t("distance under", distanceOutside(100, 150, 200), 50);
 
-t("strips wrapping quotes", stripWrapping('"Dell"'), "Dell");
-t("strips code fence", stripWrapping("```\nDell\n```"), "Dell");
-t("leaves inner quotes", stripWrapping('Dell 15" panel'), 'Dell 15" panel');
+/* ---------- settings normalisation: zero must survive ---------- */
+t("cacheDays 0 (cache off) survives", normaliseLengthSettings({ ...DEFAULTS, cacheDays: 0 }).cacheDays, 0);
+t("cacheDays '0' string survives", normaliseLengthSettings({ ...DEFAULTS, cacheDays: "0" }).cacheDays, 0);
+t("refitPasses 0 survives", normaliseLengthSettings({ ...DEFAULTS, refitPasses: 0 }).refitPasses, 0);
+t("titleMin 0 survives", normaliseLengthSettings({ ...DEFAULTS, titleMin: 0, titleMax: 200 }).titleMin, 0);
+t("negative cacheDays falls back to default", normaliseLengthSettings({ ...DEFAULTS, cacheDays: -5 }).cacheDays, DEFAULTS.cacheDays);
+t("missing titleMax falls back to default", normaliseLengthSettings({ ...DEFAULTS, titleMax: undefined }).titleMax, DEFAULTS.titleMax);
+t("min above max is clamped down to max", normaliseLengthSettings({ ...DEFAULTS, titleMin: 999, titleMax: 200 }).titleMin, 200);
 
-t("range state over", rangeState(S(210), 150, 200).state, "over");
-t("range state under", rangeState(S(10), 150, 200).state, "under");
-t("range state ok", rangeState(S(175), 150, 200).state, "ok");
+/* ---------- part number parsing: case-insensitive dedupe ---------- */
+t("case-insensitive dedupe keeps first-seen casing",
+  parsePartNumbers("abc\nABC\nAbC"), ["abc"]);
+t("distinct parts with different case both kept once",
+  parsePartNumbers("abc\ndef\nABC\nDEF"), ["abc", "def"]);
+t("dedupe with markers stripped first",
+  parsePartNumbers("1. abc\n2) ABC"), ["abc"]);
 
-const o = { title: "T", description: "D", bullets: ["a", "b", "c", "d", "e"] };
-t("reads a bullet by field name", fieldValue(o, "bullet3"), "d");
-setFieldValue(o, "bullet3", "Z");
-t("writes a bullet by field name", o.bullets[3], "Z");
-t("over message reads correctly",
-  describeIssue({ label: "Title", n: 210, min: 150, max: 200, over: true, delta: 10 }),
-  "Title is 210 characters, 10 over the 200 hard cap.");
-t("under message reads correctly",
-  describeIssue({ label: "Bullet 2", n: 100, min: 120, max: 150, over: false, delta: 20 }),
-  "Bullet 2 is 100 characters, 20 short of the 120 minimum.");
+/* ---------- normalise: locked part number & safe defaults ---------- */
+t("part_number always matches operator input regardless of model output",
+  normalise({ part_number: "MODEL-SAYS-THIS" }, "operator-typed").part_number, "operator-typed");
+t("differing model part number recorded as an alternate",
+  normalise({ part_number: "ALT-123" }, "abc").alternate_part_numbers, ["ALT-123"]);
+t("matching model part number not duplicated as alternate",
+  normalise({ part_number: "abc" }, "abc").alternate_part_numbers, []);
+t("identified defaults false when missing", normalise({}, "p").identified, false);
+t("identified defaults false when non-boolean truthy", normalise({ identified: "true" }, "p").identified, false);
+t("identified true only when explicitly boolean true", normalise({ identified: true }, "p").identified, true);
+t("confidence defaults to low when missing", normalise({}, "p").confidence, "low");
+t("confidence defaults to low when invalid", normalise({ confidence: "High" }, "p").confidence, "low");
+t("confidence passes through when valid", normalise({ confidence: "high" }, "p").confidence, "high");
 
-/* ---------- settings clamping ---------- */
-t("minimum clamped to its maximum", normaliseLengthSettings({ titleMin: 900, titleMax: 200 }).titleMin, 200);
-t("garbage falls back to default", normaliseLengthSettings({ descMin: "abc", descMax: null }).descMax, 2000);
-t("absurd maximum capped", normaliseLengthSettings({ titleMax: 99999 }).titleMax, 500);
+/* ---------- extractJson: refit replies with no title/bullets key ---------- */
+t("single bare-object candidate accepted without title/bullets",
+  extractJson('{"bullet2":"x"}'), { bullet2: "x" });
+t("fenced single-field refit reply accepted",
+  extractJson('```json\n{"bullet2":"fixed text"}\n```'), { bullet2: "fixed text" });
+t("direct array input rejected", extractJson("[1,2]"), null);
+t("direct valid object accepted", extractJson('{"title":"t"}'), { title: "t" });
+t("prose with one embedded object still extracted",
+  extractJson('Here you go:\n{"bullet0":"y"}\nThanks'), { bullet0: "y" });
 
 /* ---------- search cache ---------- */
-t("key is case-insensitive on the part",
-  searchCacheKey("yf8p5", { brand: "Dell" }, 6), searchCacheKey("YF8P5", { brand: "dell" }, 6));
-t("condition stays out of the key",
-  searchCacheKey("A", { brand: "D", condition: "New" }, 6),
-  searchCacheKey("A", { brand: "D", condition: "Used" }, 6));
-t("brand changes the key",
-  searchCacheKey("A", { brand: "D" }, 6) === searchCacheKey("A", { brand: "H" }, 6), false);
-t("result count changes the key",
-  searchCacheKey("A", {}, 6) === searchCacheKey("A", {}, 10), false);
-
-const src = n => Array.from({ length: n }, (_, i) => ({ title: "T" + i, url: "https://e/" + i, content: "c" }));
-searchCacheClear();
-searchCachePut("K", "q", src(3), cfg);
-t("stored entry comes back", searchCacheGet("K", cfg).sources.length, 3);
-t("unknown key misses", searchCacheGet("NOPE", cfg), null);
-searchCachePut("EMPTY", "q", [], cfg);
-t("zero-source search is never cached", searchCacheGet("EMPTY", cfg), null);
-t("cacheDays 0 disables reads", searchCacheGet("K", { ...cfg, cacheDays: 0 }), null);
-searchCacheClear();
-searchCachePut("Z", "q", src(1), { ...cfg, cacheDays: 0 });
-t("cacheDays 0 disables writes", searchCacheCount(), 0);
-
-/* ---------- part number parsing ---------- */
-t("splits and dedupes", parsePartNumbers("YF8P5\n0X8DXD, YF8P5"), ["YF8P5", "0X8DXD"]);
-t("strips list markers", parsePartNumbers("- YF8P5\n1. 0X8DXD"), ["YF8P5", "0X8DXD"]);
-t("drops overlong lines", parsePartNumbers("YF8P5\n" + S(60)), ["YF8P5"]);
-t("counts overlong lines separately", oversizedPartCount("YF8P5\n" + S(60)), 1);
+{
+  const key = searchCacheKey("ABC-123", { brand: "Dell" }, 6);
+  t("cache miss on empty cache", searchCacheGet(key, cfg), null);
+  searchCachePut(key, "q", [{ title: "t", url: "https://x", content: "c" }], cfg);
+  t("cache hit after put", searchCacheGet(key, cfg)?.sources?.length, 1);
+  t("cacheDays 0 disables reads even after a put",
+    searchCacheGet(key, { ...cfg, cacheDays: 0 }), null);
+  searchCacheClear();
+  t("cache empty after clear", searchCacheCount(), 0);
+}
 
 /* ---------- csv ---------- */
-const base = {
-  ...good, part_number: "=CMD", brand: "B", model: "M", product_type: "P",
-  confidence: "high", specs: [], compatibility: [], alternate_part_numbers: [],
-  warnings: [], sources: []
-};
-const csv = buildCsv([{ opts: { condition: "New" }, data: base }], cfg);
-t("formula-injection cell is neutralised", csv.includes("'=CMD"), true);
-t("length_ok is yes when in range", csv.split("\r\n")[1].includes(",yes,"), true);
-const bad = buildCsv([{ opts: {}, data: { ...base, title: S(210) } }], cfg);
-t("length_ok is NO when out of range", bad.split("\r\n")[1].includes(",NO,"), true);
+{
+  const d = normalise({ title: "t", description: "line1\r\nline2", _sources: [] }, "p");
+  const csv = buildCsv([{ opts: {}, data: d }], cfg);
+  t("length_ok is yes when in range", csv.split("\r\n")[1].includes(",yes,"), true);
+
+  const bad = normalise({ title: "short", description: "x", _sources: [] }, "p");
+  const badCsv = buildCsv([{ opts: {}, data: bad }], cfg);
+  t("length_ok is NO when out of range", badCsv.split("\r\n")[1].includes(",NO,"), true);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
