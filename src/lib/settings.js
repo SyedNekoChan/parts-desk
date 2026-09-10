@@ -38,21 +38,28 @@ export const DEFAULTS = {
    normalised on every load rather than trusted. A saved file from an
    older version has maxes but no mins; a hand-edited one could have a
    minimum above its maximum, which would make every listing permanently
-   unfittable and every repair pass a wasted API call. */
+   unfittable and every repair pass a wasted API call.
+
+   0 is a legitimate value for cacheDays (cache off), refitPasses (no
+   repair passes) and any min (no minimum enforced) — so those must be
+   allowed through rather than treated as "unset". Only a genuinely
+   invalid value (non-finite, negative, or missing) falls back to the
+   default. */
 export function normaliseLengthSettings(s) {
-  const num = (v, fb) => (Number.isFinite(+v) && +v > 0 ? Math.round(+v) : fb);
+  const numAllowZero = (v, fb) => (Number.isFinite(+v) && +v >= 0 ? Math.round(+v) : fb);
+  const numPositive = (v, fb) => (Number.isFinite(+v) && +v > 0 ? Math.round(+v) : fb);
 
-  s.titleMax = Math.min(500, Math.max(20, num(s.titleMax, DEFAULTS.titleMax)));
-  s.titleMin = Math.min(s.titleMax, Math.max(0, num(s.titleMin, DEFAULTS.titleMin)));
+  s.titleMax = Math.min(500, Math.max(20, numPositive(s.titleMax, DEFAULTS.titleMax)));
+  s.titleMin = Math.min(s.titleMax, Math.max(0, numAllowZero(s.titleMin, DEFAULTS.titleMin)));
 
-  s.bulletMax = Math.min(500, Math.max(20, num(s.bulletMax, DEFAULTS.bulletMax)));
-  s.bulletMin = Math.min(s.bulletMax, Math.max(0, num(s.bulletMin, DEFAULTS.bulletMin)));
+  s.bulletMax = Math.min(500, Math.max(20, numPositive(s.bulletMax, DEFAULTS.bulletMax)));
+  s.bulletMin = Math.min(s.bulletMax, Math.max(0, numAllowZero(s.bulletMin, DEFAULTS.bulletMin)));
 
-  s.descMax = Math.min(6000, Math.max(100, num(s.descMax, DEFAULTS.descMax)));
-  s.descMin = Math.min(s.descMax, Math.max(0, num(s.descMin, DEFAULTS.descMin)));
+  s.descMax = Math.min(6000, Math.max(100, numPositive(s.descMax, DEFAULTS.descMax)));
+  s.descMin = Math.min(s.descMax, Math.max(0, numAllowZero(s.descMin, DEFAULTS.descMin)));
 
-  s.refitPasses = Math.min(4, Math.max(0, num(s.refitPasses, DEFAULTS.refitPasses)));
-  s.cacheDays = Math.min(365, Math.max(0, num(s.cacheDays, DEFAULTS.cacheDays)));
+  s.refitPasses = Math.min(4, Math.max(0, numAllowZero(s.refitPasses, DEFAULTS.refitPasses)));
+  s.cacheDays = Math.min(365, Math.max(0, numAllowZero(s.cacheDays, DEFAULTS.cacheDays)));
   return s;
 }
 
