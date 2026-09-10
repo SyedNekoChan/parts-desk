@@ -15,7 +15,12 @@ function cell(v) {
 
 /* Character counts sit next to every length-controlled field, and one
    summary column says whether the row is publishable as-is. Sorting on
-   length_ok is the fastest way to find what still needs a human. */
+   length_ok is the fastest way to find what still needs a human.
+
+   status and identified are appended at the end rather than inserted
+   among the existing columns, so any spreadsheet or script already
+   built against fixed column positions keeps working unchanged; only
+   a re-export picks up the two new trailing columns. */
 const HEAD = [
   "part_number", "brand", "model", "product_type", "condition", "confidence",
   "length_ok", "length_notes",
@@ -23,7 +28,8 @@ const HEAD = [
   "bullet_1", "bullet_1_chars", "bullet_2", "bullet_2_chars", "bullet_3", "bullet_3_chars",
   "bullet_4", "bullet_4_chars", "bullet_5", "bullet_5_chars",
   "description", "description_chars",
-  "specs", "compatibility", "alternate_part_numbers", "warnings", "sources"
+  "specs", "compatibility", "alternate_part_numbers", "warnings", "sources",
+  "status", "identified"
 ];
 
 export function buildCsv(items, settings) {
@@ -43,7 +49,9 @@ export function buildCsv(items, settings) {
       d.compatibility.join(" | "),
       d.alternate_part_numbers.join(" | "),
       d.warnings.join(" | "),
-      d.sources.map(s => s.url).join(" | ")
+      d.sources.map(s => s.url).join(" | "),
+      item.status || "",
+      d.identified ? "yes" : "no"
     ].map(cell).join(",");
   });
 
