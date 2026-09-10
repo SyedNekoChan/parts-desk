@@ -5,20 +5,15 @@ import { safeUrl } from "../lib/research.js";
 import { distanceOutside } from "../lib/lengths.js";
 import { RangeBar } from "./ProgressBar.jsx";
 
-/* ---------- small pieces ---------- */
-
 function AutoTextarea({ value, onChange, className = "", ...rest }) {
   const ref = useRef(null);
-
   const grow = useCallback(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = el.scrollHeight + "px";
   }, []);
-
   useEffect(grow, [value, grow]);
-
   return (
     <textarea
       ref={ref}
@@ -46,17 +41,6 @@ function Counter({ state, label }) {
   );
 }
 
-/* Counter + range bar, stacked, for the title/description headers.
-   min-w-0 on the inner wrapper is the actual fix for clipping: a flex
-   item's default min-width is auto (its content's natural, unwrapped
-   width), which silently overrides max-width on the outer box. Setting
-   min-w-0 lets the flex algorithm actually honor the cap and wrap the
-   label instead of forcing the box wider than its column.
-
-   The top line shows just the count and its target (rangeState()'s
-   label with the trailing "— N over/short" clause stripped, purely for
-   display — the underlying value is untouched); the delta appears once,
-   as its own short status line under the bar, instead of twice. */
 function RangeCounter({ r }) {
   const parts = r.label.split(" — ");
   const statusLabel =
@@ -115,25 +99,15 @@ function CopyButton({ copiedKey, activeKey, onClick, children = "Copy" }) {
   );
 }
 
-/* ---------- editor ---------- */
-
 export default function ListingEditor({ item, settings, onChange, onRerun, onToast, running }) {
   const d = item.data;
   const [fitting, setFitting] = useState(null);
-  const [view, setView] = useState("edit"); // presentation-only toggle, not persisted
-  const [copiedKey, setCopiedKey] = useState(null); // which Copy button last succeeded, briefly
+  const [view, setView] = useState("edit");
+  const [copiedKey, setCopiedKey] = useState(null);
 
   const titleR = rangeState(d.title, settings.titleMin, settings.titleMax);
   const descR = rangeState(d.description, settings.descMin, settings.descMax);
 
-  /* fit() is async and can outlive the render that started it. Both
-     "apply the result" and "check whether the user changed this field
-     while we waited" need the *current* listing data at resolution
-     time, not whatever was captured in the closure when the button was
-     clicked — otherwise an edit made mid-request gets silently
-     overwritten by patch({...staleD, field: out}). A ref kept in sync
-     with the latest item.data gives fit() a live read without needing
-     d in its dependency list. */
   const dRef = useRef(d);
   useEffect(() => { dRef.current = d; }, [d]);
 
@@ -160,35 +134,20 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     }
   };
 
-  /* getCurrent/applyField let one fit() implementation work for both
-     the title/description (plain string fields) and a single bullet
-     (an index into an array) without duplicating the race-safety logic
-     per field type. */
   const fit = async (field, value, min, max, getCurrent, applyField) => {
     setFitting(field);
     try {
       const out = await refitOne(field, value, min, max, d.sources, settings);
 
-      // If the operator changed this exact field while the rewrite was
-      // in flight, the rewrite was computed against a value that no
-      // longer exists — applying it would silently discard the user's
-      // newer edit. Bail out rather than guess which one should win.
       if (getCurrent(dRef.current) !== value) {
         onToast("You edited this field while the rewrite was running, so it was discarded to avoid overwriting your change.");
         setFitting(null);
         return;
       }
 
-      /* Accept only a rewrite that actually helped. Replacing a field
-         that was 40 characters short with one 200 characters short
-         would be worse than leaving it alone, and the operator would
-         have no way of knowing that had happened. */
       const before = distanceOutside(value.trim().length, min, max);
       const after = out ? distanceOutside(out.trim().length, min, max) : Infinity;
       if (out && after < before) {
-        // Apply against the current listing, not a stale snapshot —
-        // any *other* field the operator touched meanwhile is
-        // preserved because patch() reads dRef.current at call time.
         applyField(dRef.current, out);
         onToast(after === 0 ? "Fitted." : `Closer — still ${after} characters outside the range.`);
       } else {
@@ -220,18 +179,6 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     : d.confidence === "low" || !d.identified ? ["bad", "NEEDS CHECKING"]
     : ["warn", "REASONABLY SURE"];
 
-  /* research.js can push describeIssue()-formatted strings into
-     d.warnings when its own refit pass gives up on a field. Those
-     strings describe a specific field's length problem at the moment
-     generation finished — if the operator has since fixed that field
-     (by editing it directly, or via "Fit to range"), the field no
-     longer has that issue, but the stale string would otherwise sit in
-     d.warnings forever with nothing to ever clear it. Recomputing
-     "current" length-shaped warning text on every render and dropping
-     any stored warning that matches a since-resolved issue keeps the
-     displayed list honest without mutating the stored data itself
-     (a warning describing something real — thin sourcing, ambiguous
-     identification — is left untouched). */
   const currentIssueTexts = useMemo(() => new Set(issues.map(describeIssue)), [issues]);
   const isStaleLengthWarning = w => /^(Title|Bullet \d|Description) is \d+ characters,/.test(w) && !currentIssueTexts.has(w);
   const liveWarnings = useMemo(() => d.warnings.filter(w => !isStaleLengthWarning(w)), [d.warnings, currentIssueTexts]);
@@ -242,10 +189,6 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     ...liveWarnings
   ].filter(Boolean);
 
-  /* Listing health: a qualitative rollup of checks the app already
-     performs (identification, confidence, per-field ranges, sources) —
-     no new analysis, just a compact visualization of needsReview()'s
-     inputs. */
   const health = [
     { ok: d.identified, label: "Product identified" },
     { ok: titleR.state === "ok", label: "Title valid" },
@@ -264,17 +207,12 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     d.description
   ].join("\n");
 
-  /* research.js can push describeIssue()-formatted strings into
-     d.warnings when its own refit pass gives up, so exclude anything
-     that already appears as a structured issue to avoid listing the
-     same problem twice. */
   const issueTexts = new Set(issues.map(describeIssue));
   const otherFlags = flags.filter(f => !issueTexts.has(f));
   const reviewCount = issues.length + otherFlags.length;
 
   return (
     <div className="mx-auto max-w-3xl">
-      {/* ---------- Identity header ---------- */}
       <header className="mb-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -297,7 +235,6 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
         </div>
       </header>
 
-      {/* ---------- Listing health ---------- */}
       <section className="pd-surface mb-4 p-4">
         <div className="flex items-center justify-between gap-3">
           <span className="pd-section-title">Listing health</span>
@@ -327,7 +264,6 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
         )}
       </section>
 
-      {/* ---------- Action bar ---------- */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button className="pd-btn pd-btn-primary" onClick={() => copy(wholeListing, "Listing", "whole")}>
           Copy whole listing
@@ -357,7 +293,6 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
 
       {view === "edit" ? (
         <div className="space-y-4">
-          {/* ---------- Title ---------- */}
           <Section
             title="Title"
             meta={<RangeCounter r={titleR} />}
@@ -376,7 +311,6 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
             </div>
           </Section>
 
-          {/* ---------- Bullets ---------- */}
           <Section
             title="Bullets"
             action={
@@ -416,7 +350,6 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
             </div>
           </Section>
 
-          {/* ---------- Description ---------- */}
           <Section
             title="Description"
             meta={<RangeCounter r={descR} />}
@@ -441,7 +374,6 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
             />
           </Section>
 
-          {/* ---------- Specs / Compatibility / Alternates / Sources ---------- */}
           <Section title="Specs">
             {d.specs.length ? (
               <table className="w-full text-sm">
