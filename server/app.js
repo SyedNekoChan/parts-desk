@@ -62,18 +62,43 @@ const MAX_BODY = "1mb";
 
 const app = express();
 
-app.use(cors({
+/* A disallowed origin is a routine, expected occurrence (a stray
+   browser tab, a misconfigured deploy, someone probing) — not a server
+   fault. cors() signals this by having its origin callback receive an
+   Error; left to propagate, that lands in Express's generic error
+   handler and comes back as a 500, which looks like the proxy itself
+   is broken. This wrapper recognises specifically the CORS-rejection
+   error (tagged below) and answers 403 directly, before it can reach
+   the generic handler. Any other, unrelated error still falls through
+   to that handler unchanged. */
+function corsError(origin) {
+  const err = new Error(`Origin ${origin} is not in ALLOWED_ORIGINS.`);
+  err._corsRejected = true;
+  return err;
+}
+
+const corsMiddleware = cors({
   origin(origin, cb) {
     // Same-origin and non-browser callers (curl, health checks) send no
     // Origin header at all; those are fine.
     if (!origin) return cb(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-    cb(new Error(`Origin ${origin} is not in ALLOWED_ORIGINS.`));
+    cb(corsError(origin));
   },
   allowedHeaders: ["content-type", "x-provider-key"],
   methods: ["GET", "POST", "OPTIONS"],
   maxAge: 86400
-}));
+});
+
+app.use((req, res, next) => {
+  corsMiddleware(req, res, err => {
+    if (!err) return next();
+    if (err._corsRejected) {
+      return res.status(403).json({ message: err.message });
+    }
+    next(err);
+  });
+});
 
 app.use(express.json({ limit: MAX_BODY }));
 
@@ -100,7 +125,11 @@ function providerKey(req, res) {
   return key;
 }
 
-/** One upstream call, with a timeout and the caller's key attached. */
+/** One upstream call, with a timeout and the caller's key attached.
+ *  Also relays the upstream's retry-after header (if any) back up to
+ *  the route, so a 429 from Mistral or Tavily can tell the browser
+ *  client how long to wait instead of that guidance being silently
+ *  dropped at the proxy boundary. */
 async function forward(url, { method = "POST", key, body }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -116,23 +145,33 @@ async function forward(url, { method = "POST", key, body }) {
       signal: controller.signal
     });
 
+    const retryAfter = upstream.headers.get("retry-after");
     const text = await upstream.text();
     let payload;
     try { payload = JSON.parse(text); }
     catch { payload = { message: text.slice(0, 500) }; }
 
-    return { status: upstream.status, payload };
+    return { status: upstream.status, payload, retryAfter };
   } catch (e) {
     if (e.name === "AbortError") {
       return {
         status: 504,
-        payload: { message: `The provider didn't answer within ${REQUEST_TIMEOUT_MS / 1000} seconds.` }
+        payload: { message: `The provider didn't answer within ${REQUEST_TIMEOUT_MS / 1000} seconds.` },
+        retryAfter: null
       };
     }
-    return { status: 502, payload: { message: `Couldn't reach the provider: ${e.message}` } };
+    return { status: 502, payload: { message: `Couldn't reach the provider: ${e.message}` }, retryAfter: null };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Sets retry-after on the outgoing response when the upstream sent
+ *  one, then sends the status/payload — one place for every route to
+ *  go through so none of them can forget the header. */
+function relay(res, { status, payload, retryAfter }) {
+  if (retryAfter) res.set("retry-after", retryAfter);
+  res.status(status).json(payload);
 }
 
 /* ---------- mock mode ----------
@@ -195,11 +234,11 @@ app.post("/api/tavily/search", async (req, res) => {
     return res.json({ results: mockSources(query).slice(0, max_results), answer: "" });
   }
 
-  const { status, payload } = await forward(UPSTREAM.tavilySearch, {
+  const result = await forward(UPSTREAM.tavilySearch, {
     key,
     body: { query, max_results, search_depth }
   });
-  res.status(status).json(payload);
+  relay(res, result);
 });
 
 app.post("/api/mistral/chat", async (req, res) => {
@@ -224,11 +263,11 @@ app.post("/api/mistral/chat", async (req, res) => {
     });
   }
 
-  const { status, payload } = await forward(UPSTREAM.mistralChat, {
+  const result = await forward(UPSTREAM.mistralChat, {
     key,
     body: { model, messages, temperature, max_tokens, response_format }
   });
-  res.status(status).json(payload);
+  relay(res, result);
 });
 
 app.get("/api/mistral/models", async (req, res) => {
@@ -239,8 +278,8 @@ app.get("/api/mistral/models", async (req, res) => {
     return res.json({ data: [{ id: "mistral-small-latest" }, { id: "open-mistral-nemo" }] });
   }
 
-  const { status, payload } = await forward(UPSTREAM.mistralModels, { key, method: "GET" });
-  res.status(status).json(payload);
+  const result = await forward(UPSTREAM.mistralModels, { key, method: "GET" });
+  relay(res, result);
 });
 
 app.use((req, res) => {
