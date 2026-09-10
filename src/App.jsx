@@ -14,7 +14,7 @@ import {
 import { readJson, writeJson, store, KEYS } from "./lib/storage.js";
 import { research, normalise, needsReview, parsePartNumbers, oversizedPartCount } from "./lib/research.js";
 import { searchCacheKey, searchCacheGet } from "./lib/searchCache.js";
-import { resetKeyRotation } from "./lib/mistral.js";
+import { resetKeyRotation, resetModelMemory } from "./lib/mistral.js";
 import { downloadCsv } from "./lib/csv.js";
 
 const CONDITIONS = ["New", "New — open box", "Refurbished", "Used — tested", "For parts", ""];
@@ -58,17 +58,16 @@ function TabBar({ activeTab, onChange, queueCount }) {
    the overflow. Drop whole items from the oldest end instead. */
 const ITEMS_BUDGET = 4000000;
 
-function persistItems(items) {
-  try {
-    let slim = items.map(({ id, part, status, data, error, errorRaw, errorModel, opts }) =>
-      ({ id, part, status, data, error, errorRaw, errorModel, opts }));
-    let json = JSON.stringify(slim);
-    while (json.length > ITEMS_BUDGET && slim.length > 1) {
-      slim = slim.slice(1);
-      json = JSON.stringify(slim);
-    }
-    store.set(KEYS.items, json);
-  } catch { /* non-fatal */ }
+function persistItems(items, notify) {
+  let slim = items.map(({ id, part, status, data, error, errorRaw, errorModel, opts }) =>
+    ({ id, part, status, data, error, errorRaw, errorModel, opts }));
+  let json = JSON.stringify(slim);
+  while (json.length > ITEMS_BUDGET && slim.length > 1) {
+    slim = slim.slice(1);
+    json = JSON.stringify(slim);
+  }
+  const ok = store.set(KEYS.items, json);
+  if (!ok && notify) notify("The queue is too large for this browser to save — it will not survive a reload. Export finished listings and clear some completed items.");
 }
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
@@ -83,7 +82,13 @@ export default function App() {
   const [settings, setSettings] = useState(loadSettings);
   const [items, setItems] = useState(() => {
     const saved = readJson(KEYS.items, []);
-    return Array.isArray(saved) ? saved.map(i => ({ ...i, log: [] })) : [];
+    // An item persisted mid-run as "running" means the tab closed or
+    // reloaded before it finished — it did not actually keep going in
+    // the background. Without this it would sit as "running" forever,
+    // with no control able to touch it again.
+    return Array.isArray(saved)
+      ? saved.map(i => ({ ...i, log: [], status: i.status === "running" ? "queued" : i.status }))
+      : [];
   });
   const [activeId, setActiveId] = useState(null);
   const [running, setRunning] = useState(false);
@@ -108,13 +113,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => persistItems(items), [items]);
-
   const notify = useCallback(msg => {
     setToast(msg);
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 4200);
   }, []);
+
+  useEffect(() => persistItems(items, notify), [items, notify]);
 
   /* Day and month roll over while the tab is open, so both counters are
      checked against the current date rather than only at load. */
@@ -182,6 +187,7 @@ export default function App() {
         errorRaw: err._raw ? JSON.stringify(err._raw, null, 2) : null,
         errorModel: err._model || null
       });
+      if (err._fatal) throw err; // let the batch loop see this and stop
     }
   }, [settings, updateItem, bumpTally, bumpTavily]);
 
@@ -200,6 +206,47 @@ export default function App() {
     abortRef.current = null;
   }, [running, processItem, notify]);
 
+  /* Runs every item currently sitting at "queued" — used both right
+     after a fresh paste and to resume a batch that was stopped or that
+     got interrupted by a reload (those items come back as "queued", see
+     the initial-state loader above). */
+  const runQueued = useCallback(async (queuedItems, maxResults) => {
+    abortRef.current = new AbortController();
+    const signal = abortRef.current.signal;
+    setRunning(true);
+
+    let haltedByFatalError = null;
+
+    for (let i = 0; i < queuedItems.length; i++) {
+      if (signal.aborted) break;
+      try {
+        await processItem(queuedItems[i], signal);
+      } catch (e) {
+        if (e.name === "AbortError") break;
+        if (e._fatal) { haltedByFatalError = e; break; }
+        // Non-fatal per-item error: already recorded on the item by
+        // processItem; carry on to the next one.
+      }
+
+      /* Pace the batch under the free tier's per-minute limit. Every
+         item makes at least one Mistral call (the generation step),
+         cache hit or not, so the gap is not skipped for cached parts —
+         only when the operator has set it to 0. */
+      const next = queuedItems[i + 1];
+      if (next && settings.gapSeconds > 0) {
+        try { await sleep(settings.gapSeconds * 1000, signal); }
+        catch { break; }
+      }
+    }
+
+    setRunning(false);
+    abortRef.current = null;
+
+    if (haltedByFatalError) {
+      notify(`Stopped: ${haltedByFatalError.message}`);
+    }
+  }, [settings.gapSeconds, processItem, notify]);
+
   const run = useCallback(async () => {
     if (running) { abortRef.current?.abort(); return; }
 
@@ -214,6 +261,9 @@ export default function App() {
       return;
     }
 
+    const maxResults = settings.tavilyResults || 6;
+    const stillQueued = items.filter(i => i.status === "queued");
+
     const parsed = parsePartNumbers(parts);
     const dropped = oversizedPartCount(parts);
 
@@ -225,6 +275,14 @@ export default function App() {
     const repeats = parsed.length - fresh.length;
 
     if (!fresh.length) {
+      // Nothing new was pasted. If items are already sitting queued
+      // (a stopped batch, or one recovered after a reload), resume
+      // those instead of just complaining that the paste was empty.
+      if (stillQueued.length) {
+        resetKeyRotation();
+        await runQueued(stillQueued, maxResults);
+        return;
+      }
       notify(
         repeats > 0
           ? 'Every part number is already in the queue. Open one and use "Run it again" to redo it.'
@@ -238,7 +296,6 @@ export default function App() {
     else if (repeats > 0) notify(`Skipped ${repeats} part number${repeats === 1 ? "" : "s"} already in the queue.`);
 
     const opts = { brand, condition };
-    const maxResults = settings.tavilyResults || 6;
 
     // Only parts with no usable saved search will spend a credit.
     const willSearch = fresh.filter(p => !searchCacheGet(searchCacheKey(p, opts, maxResults), settings)).length;
@@ -261,28 +318,11 @@ export default function App() {
     setParts("");
     resetKeyRotation();
 
-    abortRef.current = new AbortController();
-    const signal = abortRef.current.signal;
-    setRunning(true);
-
-    for (let i = 0; i < batch.length; i++) {
-      if (signal.aborted) break;
-      try { await processItem(batch[i], signal); }
-      catch (e) { if (e.name === "AbortError") break; }
-
-      /* Pace the batch under the free tier's per-minute limit. A cache
-         hit made no API call, so it needs no cooling-off period. */
-      const next = batch[i + 1];
-      const nextNeedsSearch = next && !searchCacheGet(searchCacheKey(next.part, next.opts, maxResults), settings);
-      if (next && settings.gapSeconds > 0 && nextNeedsSearch) {
-        try { await sleep(settings.gapSeconds * 1000, signal); }
-        catch { break; }
-      }
-    }
-
-    setRunning(false);
-    abortRef.current = null;
-  }, [running, settings, parts, brand, condition, items, tavilyUsed, processItem, notify]);
+    // Include any already-queued items (resumed) ahead of the fresh
+    // batch, so Stop-then-Run picks up exactly where it left off
+    // instead of leaving them behind.
+    await runQueued([...stillQueued, ...batch], maxResults);
+  }, [running, settings, parts, brand, condition, items, tavilyUsed, runQueued, notify]);
 
   /* ---------- queue actions ---------- */
 
@@ -294,7 +334,7 @@ export default function App() {
   }, [notify]);
 
   const exportCsv = useCallback(() => {
-    const done = items.filter(i => i.data);
+    const done = items.filter(i => i.data && i.status !== "error");
     if (!done.length) { notify("Nothing has finished yet."); return; }
     downloadCsv(done, settings);
     notify(`Exported ${done.length} listing${done.length === 1 ? "" : "s"}.`);
@@ -332,195 +372,129 @@ export default function App() {
             </div>
           </div>
 
-          <div className="ml-auto flex items-center gap-3">
-  <div className="hidden md:block">
-    <Footer />
-  </div>
-
-  <button
-    className="pd-btn pd-btn-xs"
-    onClick={() => setShowSettings(true)}
-  >
-    Settings
-  </button>
-
-  <ThemeToggle />
-</div>
+          <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
+            <button
+              type="button"
+              className="pd-btn pd-btn-sm"
+              onClick={() => setShowSettings(true)}
+            >
+              Settings
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-[88rem] px-4 py-6 sm:px-6">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6" onKeyDown={onKeyDown}>
+        {activeTab === "builder" && !active && (
+          <>
+            <TabBar activeTab={activeTab} onChange={setActiveTab} queueCount={items.length} />
 
-  {activeTab === "builder" ? (
-    <div className="grid gap-6 lg:grid-cols-[26rem_minmax(0,1fr)] lg:gap-7">
-        {/* Left rail — tabs + batch panel + daily output pinned as one
-            sticky unit while the right pane scrolls. Sized to its own
-            natural content height (no fixed height, no internal
-            scroll) — sticky positioning already stops pinning once the
-            grid row runs out of room, so nothing needs to scroll on
-            its own. */}
-        <div className="lg:sticky lg:top-[4.25rem] lg:self-start">
-          <TabBar activeTab={activeTab} onChange={setActiveTab} queueCount={items.length} />
+            <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+              <section className="pd-panel p-5">
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" htmlFor="parts-input">
+                  Part numbers
+                </label>
+                <textarea
+                  id="parts-input"
+                  className="pd-input min-h-[160px] font-mono text-sm"
+                  placeholder={"One per line, or comma/semicolon separated.\nUp to 60 per batch."}
+                  value={parts}
+                  onChange={e => setParts(e.target.value)}
+                />
 
-          <div className="pd-surface" style={{ padding: "clamp(0.875rem, 1vh + 0.6rem, 1.25rem)" }}>
-            <div className="mb-4 flex items-center justify-between">
-              <span className="pd-section-title">New listing batch</span>
-              {queued > 0 && <span className="pd-chip">{queued} queued</span>}
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" htmlFor="brand-input">
+                      Brand hint (optional)
+                    </label>
+                    <input id="brand-input" className="pd-input" placeholder="e.g. Dell, HP, Lenovo"
+                           value={brand} onChange={e => setBrand(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" htmlFor="condition-input">
+                      Condition
+                    </label>
+                    <select id="condition-input" className="pd-input" value={condition}
+                            onChange={e => setCondition(e.target.value)}>
+                      {CONDITIONS.map(c => <option key={c} value={c}>{c || "Not specified"}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-center gap-3">
+                  <button type="button" className="pd-btn pd-btn-primary" onClick={run}>
+                    {running ? "Stop" : queued > 0 ? `Run ${queued} part${queued === 1 ? "" : "s"}` : "Run"}
+                  </button>
+                  {running && <span className="text-xs text-slate-500 dark:text-slate-400">Processing…</span>}
+                </div>
+              </section>
+
+              <aside className="pd-panel p-5">
+                <ProgressBar
+                  label="Today"
+                  value={doneToday}
+                  max={settings.target}
+                  detail={`${doneToday} / ${settings.target}`}
+                />
+                <div className="mt-4 text-xs text-slate-500 dark:text-slate-400">
+                  Tavily used this month: {tavilyUsed.toLocaleString()} / {TAVILY_FREE_PER_MONTH.toLocaleString()}
+                </div>
+              </aside>
             </div>
+          </>
+        )}
 
-            <label className="pd-label" htmlFor="parts">Part numbers</label>
-            <textarea
-              id="parts"
-              rows={5}
-              className="pd-input font-mono"
-              placeholder={"YF8P5\n0X8DXD\n5CX56AA"}
-              spellCheck="false"
-              value={parts}
-              onChange={e => setParts(e.target.value)}
-              onKeyDown={onKeyDown}
-            />
-            <p className="mt-1.5 pd-hint">One per line, or comma-separated. Up to 60 at a time.</p>
-
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div>
-                <label className="pd-label" htmlFor="brand">Brand hint</label>
-                <input id="brand" className="pd-input" placeholder="Optional"
-                       value={brand} onChange={e => setBrand(e.target.value)} />
-              </div>
-              <div>
-                <label className="pd-label" htmlFor="condition">Condition</label>
-                <select id="condition" className="pd-input" value={condition}
-                        onChange={e => setCondition(e.target.value)}>
-                  {CONDITIONS.map(c => (
-                    <option key={c || "none"} value={c}>{c || "Not stated"}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <button
-              className={"pd-btn mt-4 w-full text-[15px] " + (running ? "pd-btn-danger" : "pd-btn-primary")}
-              onClick={run}
-            >
-              {running ? "Stop" : queued > 0 ? `✨ Build ${queued} listing${queued === 1 ? "" : "s"}` : "✨ Build listings"}
+        {activeTab === "builder" && active && (
+          <>
+            <button type="button" className="pd-btn pd-btn-sm mb-4" onClick={() => setActiveId(null)}>
+              ← Back
             </button>
-            <p className="mt-2 pd-hint">Ctrl/⌘ + Enter also starts a batch.</p>
-          </div>
-
-          <div className="pd-surface p-4" style={{ marginTop: "clamp(0.75rem, 1.5vh, 1rem)" }}>
-            <span className="pd-section-title">Daily output</span>
-            <ProgressBar
-              className="mt-3"
-              label="Listings today"
-              value={doneToday}
-              max={settings.target}
-              tone="accent"
-              live={running}
-              detail={`${doneToday} / ${settings.target}`}
-            />
-          </div>
-        </div>
-
-        {/* Right pane */}
-        <div className="min-w-0">
-          {!active ? (
-            <div className="pd-surface flex min-h-[60vh] items-center justify-center p-8 text-center">
-              <div className="max-w-sm">
-                <h2 className="text-sm font-bold uppercase tracking-[0.1em] text-slate-800 dark:text-slate-100">Nothing selected</h2>
-                <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-                  Add part numbers on the left to start a batch. Finished listings
-                  open here for editing, with the sources they were built from.
-                </p>
-              </div>
-            </div>
-          ) : active.status === "running" ? (
-            <div className="pd-surface p-6">
-              <h2 className="font-mono text-xl font-semibold">{active.part}</h2>
-              <ProgressBar className="mt-4" indeterminate live label="Working" detail="in progress" />
-              <ul className="mt-5 space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                {(active.log || []).map((l, i) => (
-                  <li key={i} className="animate-fade-up">{l}</li>
-                ))}
-              </ul>
-            </div>
-          ) : active.status === "error" ? (
-            <div className="pd-surface p-6">
-              <h2 className="font-mono text-xl font-semibold">{active.part}</h2>
-              <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
-                {active.error}
-              </p>
-              {active.errorRaw && (
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-sm text-slate-600 dark:text-slate-300">
-                    Raw response{active.errorModel ? ` from ${active.errorModel}` : ""}
-                  </summary>
-                  <pre className="pd-inset mt-2 overflow-x-auto p-3 font-mono text-xs">{active.errorRaw}</pre>
-                </details>
-              )}
-              <div className="mt-4 flex gap-2">
-                <button className="pd-btn" onClick={() => rerunItem(active, false)} disabled={running}>
-                  Try this one again
-                </button>
-                <button className="pd-btn" onClick={() => rerunItem(active, true)} disabled={running}>
-                  Search again (1 credit)
-                </button>
-              </div>
-            </div>
-          ) : active.data ? (
             <ListingEditor
               item={active}
               settings={settings}
               running={running}
-              onToast={notify}
               onRerun={rerunItem}
               onChange={data => updateItem(active.id, { data })}
+              onToast={notify}
             />
-          ) : (
-            <div className="pd-surface p-6">
-              <h2 className="font-mono text-xl font-semibold">{active.part}</h2>
-              <p className="mt-2 pd-hint">Waiting in the queue.</p>
-            </div>
-          )}
-        </div>
-      </div>
-  ) : (
-    <>
-      <TabBar activeTab={activeTab} onChange={setActiveTab} queueCount={items.length} />
+          </>
+        )}
 
-      <QueueManager
-        items={items}
-        activeId={activeId}
-        running={running}
-        settings={settings}
-        onSelect={id => {
-          setActiveId(id);
-          setActiveTab("builder");
-        }}
-        onClear={clearQueue}
-        onExport={exportCsv}
-      />
-    </>
-  )}
-</main>
+        {activeTab === "queue" && (
+          <>
+            <TabBar activeTab={activeTab} onChange={setActiveTab} queueCount={items.length} />
+            <QueueManager
+              items={items}
+              running={running}
+              settings={settings}
+              onSelect={id => { setActiveId(id); setActiveTab("builder"); }}
+              onExport={exportCsv}
+              onClear={clearQueue}
+            />
+          </>
+        )}
+      </main>
 
       <SettingsDialog
         open={showSettings}
         settings={settings}
         onClose={() => setShowSettings(false)}
         onToast={notify}
-        onSave={next => { saveSettings(next); setSettings(next); resetKeyRotation(); }}
+        onSave={next => { saveSettings(next); setSettings(next); resetKeyRotation(); resetModelMemory(); }}
         onWiped={() => window.location.reload()}
       />
 
       {toast && (
         <div
+          className="pd-toast fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-slate-100 dark:text-slate-900"
           role="status"
-          aria-live="polite"
-          className="pointer-events-none fixed bottom-5 left-1/2 z-50 w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 animate-fade-up"
         >
-          <div className="pd-surface px-4 py-2.5 text-sm shadow-lg">{toast}</div>
+          {toast}
         </div>
       )}
+
+      <Footer />
     </div>
   );
 }
