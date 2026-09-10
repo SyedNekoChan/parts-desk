@@ -3,7 +3,6 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [backend]
-  # Lets you re-run a deploy from the Actions tab without a new commit.
   workflow_dispatch:
 
 permissions:
@@ -11,8 +10,6 @@ permissions:
   pages: write
   id-token: write
 
-# Never let two deploys race. In-progress runs finish rather than being
-# cancelled, so a half-uploaded site is never what ends up live.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -28,17 +25,11 @@ jobs:
           node-version: 20
           cache: npm
 
-      # package-lock.json is now committed, so installs are reproducible
-      # and `npm ci` (fails fast on a lockfile/package.json mismatch,
-      # rather than silently re-resolving) is the right tool here.
       - run: npm ci
 
       - run: npm test
 
       - name: Build
-        # The repository name becomes the URL prefix on a project site.
-        # Reading it from the workflow context means a fork or a rename
-        # keeps working without anyone editing vite.config.js.
         run: VITE_BASE="/${GITHUB_REPOSITORY#*/}/" npm run build
 
       - uses: actions/configure-pages@v5
