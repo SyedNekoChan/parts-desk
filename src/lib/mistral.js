@@ -23,12 +23,15 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 /* Mistral, like most OpenAI-style APIs, can send Retry-After on a 429.
    Its rate-limit message wording isn't independently confirmed, so this
    doesn't try to parse a recommended wait out of the message text —
-   just the header, then a standard backoff. */
+   just the header, then a standard backoff. Capped so a single huge
+   header value can't stall a batch for hours. */
+const MAX_RETRY_WAIT_MS = 90000;
+
 function retryDelayMs(res) {
   const h = res?.headers?.get?.("retry-after");
   if (h) {
     const n = parseFloat(h);
-    if (!Number.isNaN(n)) return Math.ceil(n * 1000);
+    if (!Number.isNaN(n)) return Math.min(MAX_RETRY_WAIT_MS, Math.ceil(n * 1000));
   }
   return 0;
 }
@@ -56,14 +59,17 @@ async function callOnce(model, body, { signal, onNote, apiKey, settings }) {
     if (res.ok) return payload;
 
     // 404 means the model itself is gone — retiring, renamed, or a
-    // lineup change — not something a retry will fix. 429/503/500 are
-    // worth retrying with backoff.
+    // lineup change — not something a retry will fix. 401/403 are
+    // key problems, not rate problems — no retry helps either.
+    // 429/503/500 are worth retrying with backoff.
     const quotaExceeded = res.status === 429;
     const retryable = quotaExceeded || res.status === 503 || res.status === 500;
+    const authFailure = res.status === 401 || res.status === 403;
 
     lastErr = new Error(readableError(res.status, payload));
     lastErr._status = res.status;
     lastErr._daily = false;
+    lastErr._auth = authFailure;
     lastErr._model = model;
     lastErr._raw = payload; // shown verbatim in the UI so a misdiagnosis on our end is visible
 
@@ -72,7 +78,7 @@ async function callOnce(model, body, { signal, onNote, apiKey, settings }) {
       throw lastErr;
     }
 
-    const wait = retryDelayMs(res) || Math.min(60000, 4000 * Math.pow(2, attempt));
+    const wait = retryDelayMs(res) || Math.min(MAX_RETRY_WAIT_MS, 4000 * Math.pow(2, attempt));
     const mins = Math.round(wait / 60000);
     const label = wait >= 60000 ? `${mins} minute${mins === 1 ? "" : "s"}` : `${Math.round(wait / 1000)}s`;
     onNote?.(`Rate limited. Waiting ${label}, then carrying on.`);
@@ -82,14 +88,19 @@ async function callOnce(model, body, { signal, onNote, apiKey, settings }) {
   throw lastErr;
 }
 
-/* Try the operator's chosen model, then whichever one last worked in
-   this tab, then the alternates, and only fail once every option is
-   exhausted. */
+/* Try the operator's chosen model first, then whichever one last worked
+   in this tab as a fallback, then the remaining alternates, and only
+   fail once every option is exhausted.
+
+   The preferred model goes first (not lastWorkingModel) so a model
+   change in Settings takes effect on the very next call rather than
+   being masked by whatever last succeeded. */
 let lastWorkingModel = null;
 export const getLastWorkingModel = () => lastWorkingModel;
+export const resetModelMemory = () => { lastWorkingModel = null; };
 
 async function callWithModelFallback(preferred, body, ctx) {
-  const candidates = [...new Set([lastWorkingModel, preferred, ...FORMAT_MODELS].filter(Boolean))];
+  const candidates = [...new Set([preferred, lastWorkingModel, ...FORMAT_MODELS].filter(Boolean))];
   const tried = [];
   let lastErr = null;
 
@@ -125,14 +136,22 @@ async function callWithModelFallback(preferred, body, ctx) {
 /* Every configured key is its own free-tier organisation with its own
    allowance. Rather than sit through a long wait on one key, try the
    next configured key first. Only a persistent rate/quota failure
-   triggers rotation: a bad key or a missing model would fail
-   identically on every key, so there's no point trying them all. */
+   (after every model has been tried on this key) triggers rotation: a
+   bad key or a missing model would fail identically on every key, so
+   there's no point trying them all. An auth failure (401/403) is not
+   retried across models — it's thrown immediately as a fatal error so
+   the caller can stop the batch instead of burning through the model
+   fallback ladder for a key that will never work. */
 let activeKeyIndex = 0;
 export const resetKeyRotation = () => { activeKeyIndex = 0; };
 
 export async function callMistral(body, { signal, onNote, settings }) {
   const keys = (settings.apiKeys || []).filter(Boolean);
-  if (!keys.length) throw new Error("No API key configured. Add one in Settings.");
+  if (!keys.length) {
+    const err = new Error("No API key configured. Add one in Settings.");
+    err._fatal = true;
+    throw err;
+  }
 
   const start = activeKeyIndex % keys.length;
   const order = keys.map((_, i) => (start + i) % keys.length);
@@ -147,17 +166,20 @@ export async function callMistral(body, { signal, onNote, settings }) {
       return { ...result, apiKey: keys[idx], keyIndex: idx };
     } catch (e) {
       if (e.name === "AbortError") throw e;
+      if (e._auth) { e._fatal = true; throw e; }
       if (!e._daily) throw e;
       lastErr = e;
       if (keys.length > 1) onNote?.(`Key ${idx + 1} of ${keys.length} is rate- or quota-limited right now — switching to the next one instead of waiting.`);
     }
   }
 
-  throw new Error(
+  const exhausted = new Error(
     keys.length > 1
       ? `All ${keys.length} configured keys are rate- or quota-limited right now. Try again shortly, or add another free Mistral account's key in Settings.`
       : `${lastErr?.message || "A rate or quota limit has been reached."} Add a second free Mistral account's key in Settings to keep going instead of waiting — Mistral's allowance is per account, so a second key gets its own fresh one.`
   );
+  exhausted._fatal = true; // every configured key is exhausted — no point continuing the batch
+  throw exhausted;
 }
 
 /** Diagnostic: asks Mistral directly which models a key can call. */
@@ -176,13 +198,19 @@ export function textOf(payload) {
 }
 
 /* json_object mode makes clean JSON the norm, but a truncated or fenced
-   reply still turns up occasionally, so parse defensively. */
+   reply still turns up occasionally, so parse defensively.
+
+   A refit reply only contains the specific fields that were asked for
+   (e.g. just "bullet2"), so it won't have a "title" or "bullets" key.
+   When exactly one brace-object candidate is found, it's accepted on
+   its own — there's nothing else it could be. The title/bullets check
+   is only a tiebreaker when scanning found more than one candidate. */
 export function extractJson(text) {
   if (!text) return null;
 
   try {
     const direct = JSON.parse(text);
-    if (direct && typeof direct === "object") return direct;
+    if (direct && typeof direct === "object" && !Array.isArray(direct)) return direct;
   } catch { /* fall through to scanning */ }
 
   const candidates = [];
@@ -204,6 +232,14 @@ export function extractJson(text) {
         if (depth === 0) { candidates.push(text.slice(i, j + 1)); i = j; break; }
       }
     }
+  }
+
+  if (candidates.length === 1) {
+    try {
+      const o = JSON.parse(candidates[0]);
+      if (o && typeof o === "object" && !Array.isArray(o)) return o;
+    } catch { /* not valid JSON after all */ }
+    return null;
   }
 
   for (let k = candidates.length - 1; k >= 0; k--) {
