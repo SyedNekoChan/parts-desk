@@ -26,15 +26,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
-      # `npm install` rather than `npm ci`, because `npm ci` requires a
-      # package-lock.json and this project is uploaded through the GitHub
-      # web interface, where there's no local npm run to generate one.
-      # The trade-off: without a lockfile, dependencies resolve fresh on
-      # every build, so a patch release upstream could in principle change
-      # what ships. Acceptable here; if you ever do get a machine where you
-      # can run npm, commit the lockfile and change this back to `npm ci`.
-      - run: npm install
+      # package-lock.json is now committed, so installs are reproducible
+      # and `npm ci` (fails fast on a lockfile/package.json mismatch,
+      # rather than silently re-resolving) is the right tool here.
+      - run: npm ci
 
       - run: npm test
 
