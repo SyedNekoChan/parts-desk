@@ -19,9 +19,6 @@ import { downloadCsv } from "./lib/csv.js";
 
 const CONDITIONS = ["New", "New — open box", "Refurbished", "Used — tested", "For parts", ""];
 
-/* Rendered once per tab switch (only one branch is ever mounted at a
-   time), but the markup is shared here so the two call sites can't
-   drift out of sync. */
 function TabBar({ activeTab, onChange, queueCount }) {
   return (
     <div className="pd-tabbar mb-6 inline-flex">
@@ -51,11 +48,6 @@ function TabBar({ activeTab, onChange, queueCount }) {
   );
 }
 
-/* Items are persisted without their log, which is transient and can be
-   long. The previous version truncated the serialised queue with
-   slice(), producing a string that was no longer valid JSON — so the
-   next load silently threw on parse and lost the entire queue, not just
-   the overflow. Drop whole items from the oldest end instead. */
 const ITEMS_BUDGET = 4000000;
 
 function persistItems(items, notify) {
@@ -78,14 +70,53 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
   }, { once: true });
 });
 
+/* Multi-tab merge for the persisted queue. The native `storage` event
+   only fires in *other* tabs than the one that wrote — never the tab
+   that made the change — so there is no risk of an update loop from
+   simply reacting to it.
+
+   A naive "replace local state with whatever's in the event" would
+   let a background tab clobber an item this tab is actively running
+   (its in-memory "running" status and live log are the only copy of
+   that fact; the other tab's snapshot still says "queued" or "done"
+   from before this tab started). So the merge is by id, and for any
+   id present in both, the local copy wins whenever this tab considers
+   it authoritative (actively running, or already finished with data
+   the incoming copy lacks); otherwise the incoming copy wins, since it
+   reflects a change (a run finishing, a rerun, a clear) that happened
+   in the other tab and this tab doesn't know about yet. Items that
+   only exist on one side (added in one tab, not yet seen in the other)
+   are kept rather than dropped, so nothing is silently lost. */
+function mergeRemoteItems(local, incoming) {
+  const localById = new Map(local.map(i => [i.id, i]));
+  const incomingById = new Map(incoming.map(i => [i.id, i]));
+  const ids = new Set([...localById.keys(), ...incomingById.keys()]);
+
+  const merged = [];
+  for (const id of ids) {
+    const loc = localById.get(id);
+    const inc = incomingById.get(id);
+    if (loc && !inc) { merged.push(loc); continue; }
+    if (inc && !loc) { merged.push({ ...inc, log: [] }); continue; }
+
+    const localAuthoritative =
+      loc.status === "running" ||
+      (loc.status !== "queued" && !inc.data && loc.data);
+
+    merged.push(localAuthoritative ? loc : { ...inc, log: loc.log || [] });
+  }
+
+  // Preserve relative order as closely as possible: local order first,
+  // then anything new that only exists remotely, appended at the end.
+  const order = [...local.map(i => i.id), ...incoming.map(i => i.id).filter(id => !localById.has(id))];
+  const byId = new Map(merged.map(i => [i.id, i]));
+  return order.map(id => byId.get(id)).filter(Boolean);
+}
+
 export default function App() {
   const [settings, setSettings] = useState(loadSettings);
   const [items, setItems] = useState(() => {
     const saved = readJson(KEYS.items, []);
-    // An item persisted mid-run as "running" means the tab closed or
-    // reloaded before it finished — it did not actually keep going in
-    // the background. Without this it would sit as "running" forever,
-    // with no control able to touch it again.
     return Array.isArray(saved)
       ? saved.map(i => ({ ...i, log: [], status: i.status === "running" ? "queued" : i.status }))
       : [];
@@ -106,8 +137,9 @@ export default function App() {
   const abortRef = useRef(null);
   const nextId = useRef(1);
   const toastTimer = useRef(null);
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
 
-  // Keep the id counter ahead of anything restored from storage.
   useEffect(() => {
     nextId.current = items.reduce((m, i) => Math.max(m, i.id + 1), 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,8 +153,48 @@ export default function App() {
 
   useEffect(() => persistItems(items, notify), [items, notify]);
 
-  /* Day and month roll over while the tab is open, so both counters are
-     checked against the current date rather than only at load. */
+  /* Cross-tab sync. The browser's `storage` event fires in every tab
+     except the one that wrote, so this can only ever react to a
+     *different* tab's change — there is no path back to the tab that
+     made the write, which is what rules out an update loop. Settings
+     and the day/month counters are simple last-write-wins (there's
+     nothing to lose by taking whichever value is newest); the queue
+     itself goes through mergeRemoteItems so an in-progress run in this
+     tab can't be overwritten by a stale snapshot from another. */
+  useEffect(() => {
+    const onStorage = e => {
+      if (!e.key || e.newValue == null) return;
+
+      if (e.key === KEYS.items) {
+        let incoming;
+        try { incoming = JSON.parse(e.newValue); } catch { return; }
+        if (!Array.isArray(incoming)) return;
+        setItems(prev => mergeRemoteItems(prev, incoming));
+        return;
+      }
+      if (e.key === KEYS.settings) {
+        try { setSettings(JSON.parse(e.newValue)); } catch { /* ignore malformed */ }
+        return;
+      }
+      if (e.key === KEYS.tally) {
+        try {
+          const next = JSON.parse(e.newValue);
+          setTally(prev => (next.day === localDay() && next.count > prev.count ? next : prev));
+        } catch { /* ignore malformed */ }
+        return;
+      }
+      if (e.key === KEYS.tavilyQuota) {
+        try {
+          const next = JSON.parse(e.newValue);
+          setTavily(prev => (next.month === localMonth() && next.count > prev.count ? next : prev));
+        } catch { /* ignore malformed */ }
+        return;
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   const bumpTally = useCallback(() => {
     setTally(prev => {
       const day = localDay();
@@ -150,12 +222,6 @@ export default function App() {
     setItems(prev => prev.map(i => (i.id === id ? { ...i, ...patch } : i)));
   }, []);
 
-  /* ---------- running ---------- */
-
-  /* Runs one queue entry to completion, in place. Both the batch loop
-     and the single-item retry go through here, so a retry updates the
-     entry that already exists instead of appending a second one for the
-     same part number. */
   const processItem = useCallback(async (item, signal, { forceFresh = false } = {}) => {
     updateItem(item.id, { status: "running", log: [] });
     setActiveId(item.id);
@@ -187,7 +253,7 @@ export default function App() {
         errorRaw: err._raw ? JSON.stringify(err._raw, null, 2) : null,
         errorModel: err._model || null
       });
-      if (err._fatal) throw err; // let the batch loop see this and stop
+      if (err._fatal) throw err;
     }
   }, [settings, updateItem, bumpTally, bumpTavily]);
 
@@ -206,10 +272,6 @@ export default function App() {
     abortRef.current = null;
   }, [running, processItem, notify]);
 
-  /* Runs every item currently sitting at "queued" — used both right
-     after a fresh paste and to resume a batch that was stopped or that
-     got interrupted by a reload (those items come back as "queued", see
-     the initial-state loader above). */
   const runQueued = useCallback(async (queuedItems, maxResults) => {
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
@@ -224,14 +286,8 @@ export default function App() {
       } catch (e) {
         if (e.name === "AbortError") break;
         if (e._fatal) { haltedByFatalError = e; break; }
-        // Non-fatal per-item error: already recorded on the item by
-        // processItem; carry on to the next one.
       }
 
-      /* Pace the batch under the free tier's per-minute limit. Every
-         item makes at least one Mistral call (the generation step),
-         cache hit or not, so the gap is not skipped for cached parts —
-         only when the operator has set it to 0. */
       const next = queuedItems[i + 1];
       if (next && settings.gapSeconds > 0) {
         try { await sleep(settings.gapSeconds * 1000, signal); }
@@ -267,17 +323,11 @@ export default function App() {
     const parsed = parsePartNumbers(parts);
     const dropped = oversizedPartCount(parts);
 
-    /* Dedupe against the whole queue, not just this paste. Re-pasting an
-       overlapping list used to research every repeat again from
-       scratch, at one Tavily credit each. */
     const already = new Set(items.map(i => i.part.trim().toUpperCase()));
     const fresh = parsed.filter(p => !already.has(p.trim().toUpperCase()));
     const repeats = parsed.length - fresh.length;
 
     if (!fresh.length) {
-      // Nothing new was pasted. If items are already sitting queued
-      // (a stopped batch, or one recovered after a reload), resume
-      // those instead of just complaining that the paste was empty.
       if (stillQueued.length) {
         resetKeyRotation();
         await runQueued(stillQueued, maxResults);
@@ -297,7 +347,6 @@ export default function App() {
 
     const opts = { brand, condition };
 
-    // Only parts with no usable saved search will spend a credit.
     const willSearch = fresh.filter(p => !searchCacheGet(searchCacheKey(p, opts, maxResults), settings)).length;
     const cached = fresh.length - willSearch;
     const left = TAVILY_FREE_PER_MONTH - tavilyUsed;
@@ -318,13 +367,8 @@ export default function App() {
     setParts("");
     resetKeyRotation();
 
-    // Include any already-queued items (resumed) ahead of the fresh
-    // batch, so Stop-then-Run picks up exactly where it left off
-    // instead of leaving them behind.
     await runQueued([...stillQueued, ...batch], maxResults);
   }, [running, settings, parts, brand, condition, items, tavilyUsed, runQueued, notify]);
-
-  /* ---------- queue actions ---------- */
 
   const clearQueue = useCallback(() => {
     setItems([]);
@@ -353,8 +397,6 @@ export default function App() {
   const onKeyDown = e => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); run(); }
   };
-
-  /* ---------- render ---------- */
 
   const queued = parsePartNumbers(parts).length;
 
