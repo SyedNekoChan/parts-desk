@@ -20,7 +20,6 @@ const S = n => "x".repeat(n);
 const cfg = { ...DEFAULTS };
 const good = { title: S(175), bullets: [S(130), S(130), S(130), S(130), S(130)], description: S(1750) };
 
-/* ---------- length rules ---------- */
 t("in-range listing is clean", lengthIssues(good, cfg).length, 0);
 t("title at 200 is fine", lengthIssues({ ...good, title: S(200) }, cfg).length, 0);
 t("title at 150 is fine", lengthIssues({ ...good, title: S(150) }, cfg).length, 0);
@@ -40,7 +39,6 @@ t("target lands inside the range", lengthTarget(150, 200), 185);
 t("distance zero inside range", distanceOutside(160, 150, 200), 0);
 t("distance over", distanceOutside(220, 150, 200), 20);
 
-/* ---------- settings normalisation: zero must survive ---------- */
 t("cacheDays 0 (cache off) survives", normaliseLengthSettings({ ...DEFAULTS, cacheDays: 0 }).cacheDays, 0);
 t("cacheDays '0' string survives", normaliseLengthSettings({ ...DEFAULTS, cacheDays: "0" }).cacheDays, 0);
 t("refitPasses 0 survives", normaliseLengthSettings({ ...DEFAULTS, refitPasses: 0 }).refitPasses, 0);
@@ -49,7 +47,6 @@ t("negative cacheDays falls back to default", normaliseLengthSettings({ ...DEFAU
 t("missing titleMax falls back to default", normaliseLengthSettings({ ...DEFAULTS, titleMax: undefined }).titleMax, DEFAULTS.titleMax);
 t("min above max is clamped down to max", normaliseLengthSettings({ ...DEFAULTS, titleMin: 999, titleMax: 200 }).titleMin, 200);
 
-/* ---------- part number parsing: case-insensitive dedupe ---------- */
 t("case-insensitive dedupe keeps first-seen casing",
   parsePartNumbers("abc\nABC\nAbC"), ["abc"]);
 t("distinct parts with different case both kept once",
@@ -57,7 +54,6 @@ t("distinct parts with different case both kept once",
 t("dedupe with markers stripped first",
   parsePartNumbers("1. abc\n2) ABC"), ["abc"]);
 
-/* ---------- normalise: locked part number & safe defaults ---------- */
 t("part_number always matches operator input regardless of model output",
   normalise({ part_number: "MODEL-SAYS-THIS" }, "operator-typed").part_number, "operator-typed");
 t("differing model part number recorded as an alternate",
@@ -71,7 +67,6 @@ t("confidence defaults to low when missing", normalise({}, "p").confidence, "low
 t("confidence defaults to low when invalid", normalise({ confidence: "High" }, "p").confidence, "low");
 t("confidence passes through when valid", normalise({ confidence: "high" }, "p").confidence, "high");
 
-/* ---------- extractJson: refit replies with no title/bullets key ---------- */
 t("single bare-object candidate accepted without title/bullets",
   extractJson('{"bullet2":"x"}'), { bullet2: "x" });
 t("fenced single-field refit reply accepted",
@@ -81,7 +76,6 @@ t("direct valid object accepted", extractJson('{"title":"t"}'), { title: "t" });
 t("prose with one embedded object still extracted",
   extractJson('Here you go:\n{"bullet0":"y"}\nThanks'), { bullet0: "y" });
 
-/* ---------- search cache ---------- */
 {
   const key = searchCacheKey("ABC-123", { brand: "Dell" }, 6);
   t("cache miss on empty cache", searchCacheGet(key, cfg), null);
@@ -93,15 +87,24 @@ t("prose with one embedded object still extracted",
   t("cache empty after clear", searchCacheCount(), 0);
 }
 
-/* ---------- csv ---------- */
+/* ---------- csv: status/identified columns ---------- */
 {
-  const d = normalise({ title: "t", description: "line1\r\nline2", _sources: [] }, "p");
-  const csv = buildCsv([{ opts: {}, data: d }], cfg);
-  t("length_ok is yes when in range", csv.split("\r\n")[1].includes(",yes,"), true);
+  const goodListing = normalise({
+    title: S(175), bullets: [S(130), S(130), S(130), S(130), S(130)],
+    description: S(1750), identified: true, _sources: []
+  }, "p");
+  const csv = buildCsv([{ opts: {}, status: "done", data: goodListing }], cfg);
+  const header = csv.split("\r\n")[0];
+  const row = csv.split("\r\n")[1];
+  t("header ends with status,identified", header.endsWith(",status,identified"), true);
+  t("length_ok is yes when in range", row.includes(",yes,"), true);
+  t("row reports status", row.includes(",done,"), true);
+  t("row reports identified yes", row.trim().endsWith(",done,yes"), true);
 
-  const bad = normalise({ title: "short", description: "x", _sources: [] }, "p");
-  const badCsv = buildCsv([{ opts: {}, data: bad }], cfg);
-  t("length_ok is NO when out of range", badCsv.split("\r\n")[1].includes(",NO,"), true);
+  const unidentified = normalise({ title: "short", description: "x", identified: false, _sources: [] }, "p");
+  const badRow = buildCsv([{ opts: {}, status: "review", data: unidentified }], cfg).split("\r\n")[1];
+  t("length_ok is NO when out of range", badRow.includes(",NO,"), true);
+  t("row reports identified no", badRow.trim().endsWith(",review,no"), true);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
