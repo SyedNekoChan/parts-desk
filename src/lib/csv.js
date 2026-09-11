@@ -1,4 +1,4 @@
-import { lengthIssues, describeIssue } from "./lengths.js";
+import { lengthIssues, describeIssue, liveWarnings } from "./lengths.js";
 import { localDay } from "./settings.js";
 
 function cell(v) {
@@ -48,7 +48,11 @@ export function buildCsv(items, settings) {
       d.specs.map(s => `${s.label}: ${s.value}`).join(" | "),
       d.compatibility.join(" | "),
       d.alternate_part_numbers.join(" | "),
-      d.warnings.join(" | "),
+      // Only the warnings still true of the listing's current fields —
+      // a length warning for a field the operator has since fixed
+      // (directly, or via "Fit to range") is dropped rather than
+      // exported as if it still applied.
+      liveWarnings(d, settings).join(" | "),
       d.sources.map(s => s.url).join(" | "),
       item.status || "",
       d.identified ? "yes" : "no"
