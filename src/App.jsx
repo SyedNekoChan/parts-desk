@@ -414,7 +414,8 @@ export default function App() {
             </div>
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-3">
+            <Footer />
             <ThemeToggle />
             <button
               type="button"
@@ -535,8 +536,6 @@ export default function App() {
           {toast}
         </div>
       )}
-
-      <Footer />
     </div>
   );
 }
