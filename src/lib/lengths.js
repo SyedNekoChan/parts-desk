@@ -45,6 +45,29 @@ export function describeIssue(i) {
     : `${i.label} is ${i.n} characters, ${i.delta} short of the ${i.min} minimum.`;
 }
 
+/* research.js's own repair pass can push a describeIssue()-formatted
+   string into d.warnings when it gives up on a field. That string
+   describes a specific field's length problem at the moment generation
+   finished — if the operator has since fixed that field (a manual
+   edit, or the editor's "Fit to range"), the field no longer has that
+   issue, but the stale string would otherwise sit in d.warnings
+   forever with nothing to ever clear it, keeping the item stuck in
+   review and showing a false warning on export.
+
+   Used by needsReview() and the CSV export (previously only the editor
+   filtered this for display, so an item could look clean in the editor
+   but still count as "review" and still show the stale text in the
+   CSV). Recomputes "current" length-shaped warning text against the
+   listing's actual current fields and drops any stored warning that
+   matches a since-resolved issue; a warning describing something real
+   (thin sourcing, ambiguous identification) is left untouched. */
+export function liveWarnings(d, settings) {
+  const currentIssueTexts = new Set(lengthIssues(d, settings).map(describeIssue));
+  const isStaleLengthWarning = w =>
+    /^(Title|Bullet \d+|Description) is \d+ characters,/.test(w) && !currentIssueTexts.has(w);
+  return (d.warnings || []).filter(w => !isStaleLengthWarning(w));
+}
+
 export function fieldValue(d, field) {
   if (field === "title") return d.title || "";
   if (field === "description") return d.description || "";
@@ -65,7 +88,7 @@ export function setFieldValue(d, field, value) {
 export function stripWrapping(s) {
   let t = String(s).trim();
   t = t.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "").trim();
-  if (t.length > 1 && /^["'“]/.test(t) && /["'”]$/.test(t)) t = t.slice(1, -1).trim();
+  if (t.length > 1 && /^["'"]/.test(t) && /["'"]$/.test(t)) t = t.slice(1, -1).trim();
   return t;
 }
 
