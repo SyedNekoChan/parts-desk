@@ -22,10 +22,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
           cache: npm
 
-      - run: npm ci || npm install
+      # The `|| npm install` fallback let a broken or empty lockfile
+      # silently degrade into an unreproducible install instead of
+      # failing the build — masking exactly the kind of lockfile
+      # problem that needs to be caught, not worked around.
+      - run: npm ci
 
       - run: npm test
 
