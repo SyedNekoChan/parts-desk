@@ -416,7 +416,7 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
                   return (
                     <li key={i}>
                       {href ? (
-                        
+                        <a
                           href={href}
                           target="_blank"
                           rel="noopener noreferrer"
