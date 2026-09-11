@@ -32,6 +32,13 @@ export async function tavilySearch(query, apiKey, maxResults, signal) {
     const msg = payload?.detail?.error || payload?.error || `Tavily returned ${res.status}.`;
     const err = new Error(`Tavily search failed: ${msg}`);
     err._status = res.status;
+    // 401/403 are a bad or revoked key; 429/432 are the monthly plan
+    // limit. Neither clears by retrying, and both fail identically for
+    // every remaining part in the batch, so mark them fatal — the same
+    // signal callMistral already uses — so the batch loop stops instead
+    // of burning the full per-item retry/gap cycle on each remaining
+    // part just to fail the same way.
+    if ([401, 403, 429, 432].includes(res.status)) err._fatal = true;
     throw err;
   }
 
