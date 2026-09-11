@@ -46,8 +46,12 @@ export const DEFAULTS = {
    invalid value (non-finite, negative, or missing) falls back to the
    default. */
 export function normaliseLengthSettings(s) {
-  const numAllowZero = (v, fb) => (Number.isFinite(+v) && +v >= 0 ? Math.round(+v) : fb);
-  const numPositive = (v, fb) => (Number.isFinite(+v) && +v > 0 ? Math.round(+v) : fb);
+  /* An empty, null, or undefined field means "the operator cleared it",
+     which should fall back to the default — not be coerced by `+v` into
+     the number 0 and then accepted as a deliberate zero. Only a value
+     that actually parses to a number is a real input; blank is not. */
+  const numAllowZero = (v, fb) => (v !== "" && v != null && Number.isFinite(+v) && +v >= 0 ? Math.round(+v) : fb);
+  const numPositive = (v, fb) => (v !== "" && v != null && Number.isFinite(+v) && +v > 0 ? Math.round(+v) : fb);
 
   s.titleMax = Math.min(500, Math.max(20, numPositive(s.titleMax, DEFAULTS.titleMax)));
   s.titleMin = Math.min(s.titleMax, Math.max(0, numAllowZero(s.titleMin, DEFAULTS.titleMin)));
