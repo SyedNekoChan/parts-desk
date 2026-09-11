@@ -6,6 +6,7 @@ import ProgressBar from "./components/ProgressBar.jsx";
 import Footer from "./components/Footer.jsx";
 import SettingsDialog from "./components/SettingsDialog.jsx";
 import ListingEditor from "./components/ListingEditor.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 
 import {
   loadSettings, saveSettings, TAVILY_FREE_PER_MONTH,
@@ -17,6 +18,7 @@ import { searchCacheKey, searchCacheGet } from "./lib/searchCache.js";
 import { resetKeyRotation, resetModelMemory } from "./lib/mistral.js";
 import { downloadCsv } from "./lib/csv.js";
 import { makeItemId, isHeartbeatFresh, mergeRemoteItems } from "./lib/queueSync.js";
+import { activeViewKind } from "./lib/activeView.js";
 
 const CONDITIONS = ["New", "New — open box", "Refurbished", "Used — tested", "For parts", ""];
 
@@ -468,6 +470,7 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6" onKeyDown={onKeyDown}>
+        <ErrorBoundary>
         {activeTab === "builder" && !active && (
           <>
             <TabBar activeTab={activeTab} onChange={setActiveTab} queueCount={items.length} />
@@ -532,14 +535,71 @@ export default function App() {
             <button type="button" className="pd-btn pd-btn-sm mb-4" onClick={() => setActiveId(null)}>
               ← Back
             </button>
-            <ListingEditor
-              item={active}
-              settings={settings}
-              running={running}
-              onRerun={rerunItem}
-              onChange={data => updateItem(active.id, { data })}
-              onToast={notify}
-            />
+
+            {(() => {
+              // ListingEditor assumes item.data is populated and
+              // crashes on null — this used to be reached the instant
+              // a run started, since processItem sets activeId before
+              // research() resolves. Routing through the item's actual
+              // state first means ListingEditor is only ever mounted
+              // once there's real data to show it.
+              const kind = activeViewKind(active);
+
+              if (kind === "error") {
+                return (
+                  <div className="pd-surface p-6">
+                    <h2 className="font-mono text-xl font-semibold">{active.part}</h2>
+                    <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{active.error}</p>
+                    {active.errorRaw && (
+                      <details className="mt-3">
+                        <summary className="cursor-pointer text-xs text-slate-500 dark:text-slate-400">
+                          Raw response{active.errorModel ? ` from ${active.errorModel}` : ""}
+                        </summary>
+                        <pre className="pd-inset mt-2 overflow-x-auto p-3 font-mono text-xs">{active.errorRaw}</pre>
+                      </details>
+                    )}
+                    <div className="mt-4 flex gap-2">
+                      <button className="pd-btn" onClick={() => rerunItem(active, false)} disabled={running}>
+                        Try this one again
+                      </button>
+                      <button className="pd-btn" onClick={() => rerunItem(active, true)} disabled={running}>
+                        Search again (spends a credit)
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              if (kind === "listing") {
+                return (
+                  <ListingEditor
+                    item={active}
+                    settings={settings}
+                    running={running}
+                    onRerun={rerunItem}
+                    onChange={data => updateItem(active.id, { data })}
+                    onToast={notify}
+                  />
+                );
+              }
+
+              // kind === "waiting": queued or currently researching —
+              // there's nothing to show yet, so show that plainly
+              // instead of a component that expects data to exist.
+              return (
+                <div className="pd-surface p-6">
+                  <h2 className="font-mono text-xl font-semibold">{active.part}</h2>
+                  <p className="mt-2 pd-hint">
+                    {active.status === "running" ? "Working on this one…" : "Waiting in the queue."}
+                  </p>
+                  {active.log?.length > 0 && (
+                    <ul className="mt-3 space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                      {active.log.map((line, i) => <li key={i}>{line}</li>)}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()}
           </>
         )}
 
@@ -556,6 +616,7 @@ export default function App() {
             />
           </>
         )}
+      </ErrorBoundary>
       </main>
 
       <SettingsDialog
