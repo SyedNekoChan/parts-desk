@@ -68,6 +68,16 @@ export const KEYS = {
   quota: "pd.quota",
   tavilyQuota: "pd.tavilyQuota",
   items: "pd.items",
+  // Written whenever a tab clears the queue, so another tab's
+  // cross-tab merge can recognise the clear as authoritative rather
+  // than treating its own not-yet-cleared items as newer and writing
+  // them back — see mergeRemoteItems in App.jsx.
+  itemsClearedAt: "pd.itemsClearedAt",
+  // One entry per part id this tab is actively researching right now,
+  // refreshed periodically. Lets another tab's queue-run skip items
+  // that are already being worked on elsewhere instead of processing
+  // the same part twice.
+  runningHeartbeat: "pd.runningHeartbeat",
   searchCache: "pd.searchCache",
   theme: "pd.theme"
 };
