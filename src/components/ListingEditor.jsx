@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { rangeState, lengthIssues, describeIssue } from "../lib/lengths.js";
+import { rangeState, lengthIssues, describeIssue, liveWarnings as getLiveWarnings } from "../lib/lengths.js";
 import { refitOne } from "../lib/research.js";
 import { safeUrl } from "../lib/research.js";
 import { distanceOutside } from "../lib/lengths.js";
@@ -179,9 +179,9 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     : d.confidence === "low" || !d.identified ? ["bad", "NEEDS CHECKING"]
     : ["warn", "REASONABLY SURE"];
 
-  const currentIssueTexts = useMemo(() => new Set(issues.map(describeIssue)), [issues]);
-  const isStaleLengthWarning = w => /^(Title|Bullet \d|Description) is \d+ characters,/.test(w) && !currentIssueTexts.has(w);
-  const liveWarnings = useMemo(() => d.warnings.filter(w => !isStaleLengthWarning(w)), [d.warnings, currentIssueTexts]);
+  // Shared with needsReview() and the CSV export so all three agree on
+  // whether a since-fixed length warning is still showing.
+  const liveWarnings = useMemo(() => getLiveWarnings(d, settings), [d, settings]);
 
   const flags = [
     !d.identified && "The part number couldn't be pinned to one product with confidence.",
@@ -416,7 +416,7 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
                   return (
                     <li key={i}>
                       {href ? (
-                        <a
+                        
                           href={href}
                           target="_blank"
                           rel="noopener noreferrer"
