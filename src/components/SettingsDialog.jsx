@@ -85,13 +85,17 @@ export default function SettingsDialog({ open, settings, onSave, onClose, onToas
     next.retries = Math.max(0, Math.min(8, +next.retries || 0));
     next.tavilyResults = Math.max(3, Math.min(10, +next.tavilyResults || 6));
 
+    // Captured before normalising so we can tell the operator when a
+    // typed value got clamped. Passed through as-is (not pre-converted
+    // with `+`) so normaliseLengthSettings can tell an empty field
+    // (falls back to default) apart from an explicitly typed 0.
     const wanted = {
-      titleMin: +next.titleMin, titleMax: +next.titleMax,
-      bulletMin: +next.bulletMin, bulletMax: +next.bulletMax,
-      descMin: +next.descMin, descMax: +next.descMax
+      titleMin: next.titleMin, titleMax: next.titleMax,
+      bulletMin: next.bulletMin, bulletMax: next.bulletMax,
+      descMin: next.descMin, descMax: next.descMax
     };
     normaliseLengthSettings(next);
-    const clamped = Object.keys(wanted).some(k => wanted[k] !== next[k]);
+    const clamped = Object.keys(wanted).some(k => wanted[k] !== "" && wanted[k] != null && +wanted[k] !== next[k]);
 
     onSave(next);
     onToast(
