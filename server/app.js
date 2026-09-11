@@ -86,6 +86,11 @@ const corsMiddleware = cors({
     cb(corsError(origin));
   },
   allowedHeaders: ["content-type", "x-provider-key"],
+  // retry-after is forwarded from the upstream provider (see forward()
+  // below), but without this the browser's fetch() strips it from what
+  // client JS can read, silently discarding the wait guidance a 429
+  // response carries.
+  exposedHeaders: ["retry-after"],
   methods: ["GET", "POST", "OPTIONS"],
   maxAge: 86400
 });
