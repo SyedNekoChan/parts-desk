@@ -4,7 +4,7 @@ import { formatPrompt, refitPrompt, refitOnePrompt } from "./prompts.js";
 import { searchCacheKey, searchCacheGet, searchCachePut } from "./searchCache.js";
 import {
   lengthIssues, describeIssue, distanceOutside,
-  setFieldValue, stripWrapping
+  setFieldValue, stripWrapping, liveWarnings
 } from "./lengths.js";
 import { MAX_PART_LENGTH } from "./settings.js";
 
@@ -127,6 +127,12 @@ async function refitLengths(data, sources, { settings, signal, onNote }) {
       data = await refitCall(data, sources, { settings, signal, onNote: t => onNote({ text: t }) });
     } catch (e) {
       if (e.name === "AbortError") throw e;
+      // A fatal error (every Mistral key exhausted, no key configured)
+      // means every remaining item in the batch would fail identically
+      // too — swallowing it here let the batch grind through the full
+      // retry ladder on each one instead of stopping. Let the caller
+      // (App.jsx's batch loop) see it and halt.
+      if (e._fatal) throw e;
       onNote({ text: `Couldn't run the length fix (${e.message}). Keeping what's there and flagging it.` });
       break;
     }
@@ -273,7 +279,7 @@ export function normalise(d, part) {
 export function needsReview(d, settings) {
   return !d.identified
     || d.confidence === "low"
-    || d.warnings.length > 0
+    || liveWarnings(d, settings).length > 0
     || lengthIssues(d, settings).length > 0
     || d.sources.length < 2;
 }
