@@ -20,9 +20,13 @@ export default defineConfig(({ command }) => ({
     sourcemap: false,
     // Keeps the vendor bundle separate so a copy edit doesn't invalidate
     // React in everyone's browser cache on the next deploy.
-    rollupOptions: {
+        rollupOptions: {
       output: {
-        manualChunks: { react: ["react", "react-dom"] }
+        manualChunks(id) {
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) {
+            return "react";
+          }
+        }
       }
     }
   },

@@ -179,8 +179,6 @@ export default function ListingEditor({ item, settings, onChange, onRerun, onToa
     : d.confidence === "low" || !d.identified ? ["bad", "NEEDS CHECKING"]
     : ["warn", "REASONABLY SURE"];
 
-  // Shared with needsReview() and the CSV export so all three agree on
-  // whether a since-fixed length warning is still showing.
   const liveWarnings = useMemo(() => getLiveWarnings(d, settings), [d, settings]);
 
   const flags = [
