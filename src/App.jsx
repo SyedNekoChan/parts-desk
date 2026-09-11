@@ -16,6 +16,7 @@ import { research, normalise, needsReview, parsePartNumbers, oversizedPartCount 
 import { searchCacheKey, searchCacheGet } from "./lib/searchCache.js";
 import { resetKeyRotation, resetModelMemory } from "./lib/mistral.js";
 import { downloadCsv } from "./lib/csv.js";
+import { makeItemId, isHeartbeatFresh, mergeRemoteItems } from "./lib/queueSync.js";
 
 const CONDITIONS = ["New", "New — open box", "Refurbished", "Used — tested", "For parts", ""];
 
@@ -50,6 +51,12 @@ function TabBar({ activeTab, onChange, queueCount }) {
 
 const ITEMS_BUDGET = 4000000;
 
+// Persistence degradation is sticky across renders (every log line
+// during an active run calls this), so the warning is only worth
+// surfacing once, on the leading edge — not on every single write
+// while the queue stays too large to save.
+let wasPersistDegraded = false;
+
 function persistItems(items, notify) {
   let slim = items.map(({ id, part, status, data, error, errorRaw, errorModel, opts }) =>
     ({ id, part, status, data, error, errorRaw, errorModel, opts }));
@@ -59,8 +66,27 @@ function persistItems(items, notify) {
     json = JSON.stringify(slim);
   }
   const ok = store.set(KEYS.items, json);
-  if (!ok && notify) notify("The queue is too large for this browser to save — it will not survive a reload. Export finished listings and clear some completed items.");
+  if (!ok) {
+    if (!wasPersistDegraded && notify) {
+      notify("The queue is too large for this browser to save — it will not survive a reload. Export finished listings and clear some completed items.");
+    }
+    wasPersistDegraded = true;
+  } else {
+    wasPersistDegraded = false;
+  }
 }
+
+/* Ids used to be a per-tab sequential counter seeded once from the
+   items already on disk at mount. Two tabs open at once each start
+   their own counter from the same seed, so both could hand out the
+   same id to two different parts in the same session — and the
+   cross-tab merge, which matches items by id, would then silently
+   treat one part's research as if it belonged to the other. A
+   timestamp plus a random suffix makes a same-millisecond collision
+   between two tabs astronomically unlikely without needing any
+   cross-tab coordination to avoid it. makeItemId, isHeartbeatFresh and
+   mergeRemoteItems live in lib/queueSync.js (a plain module, not a
+   component) so the merge algorithm can be unit tested directly. */
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   const t = setTimeout(resolve, ms);
@@ -69,49 +95,6 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
     reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
   }, { once: true });
 });
-
-/* Multi-tab merge for the persisted queue. The native `storage` event
-   only fires in *other* tabs than the one that wrote — never the tab
-   that made the change — so there is no risk of an update loop from
-   simply reacting to it.
-
-   A naive "replace local state with whatever's in the event" would
-   let a background tab clobber an item this tab is actively running
-   (its in-memory "running" status and live log are the only copy of
-   that fact; the other tab's snapshot still says "queued" or "done"
-   from before this tab started). So the merge is by id, and for any
-   id present in both, the local copy wins whenever this tab considers
-   it authoritative (actively running, or already finished with data
-   the incoming copy lacks); otherwise the incoming copy wins, since it
-   reflects a change (a run finishing, a rerun, a clear) that happened
-   in the other tab and this tab doesn't know about yet. Items that
-   only exist on one side (added in one tab, not yet seen in the other)
-   are kept rather than dropped, so nothing is silently lost. */
-function mergeRemoteItems(local, incoming) {
-  const localById = new Map(local.map(i => [i.id, i]));
-  const incomingById = new Map(incoming.map(i => [i.id, i]));
-  const ids = new Set([...localById.keys(), ...incomingById.keys()]);
-
-  const merged = [];
-  for (const id of ids) {
-    const loc = localById.get(id);
-    const inc = incomingById.get(id);
-    if (loc && !inc) { merged.push(loc); continue; }
-    if (inc && !loc) { merged.push({ ...inc, log: [] }); continue; }
-
-    const localAuthoritative =
-      loc.status === "running" ||
-      (loc.status !== "queued" && !inc.data && loc.data);
-
-    merged.push(localAuthoritative ? loc : { ...inc, log: loc.log || [] });
-  }
-
-  // Preserve relative order as closely as possible: local order first,
-  // then anything new that only exists remotely, appended at the end.
-  const order = [...local.map(i => i.id), ...incoming.map(i => i.id).filter(id => !localById.has(id))];
-  const byId = new Map(merged.map(i => [i.id, i]));
-  return order.map(id => byId.get(id)).filter(Boolean);
-}
 
 export default function App() {
   const [settings, setSettings] = useState(loadSettings);
@@ -135,15 +118,16 @@ export default function App() {
   const [tavily, setTavily] = useState(() => readJson(KEYS.tavilyQuota, { month: localMonth(), count: 0 }));
 
   const abortRef = useRef(null);
-  const nextId = useRef(1);
   const toastTimer = useRef(null);
   const itemsRef = useRef(items);
   useEffect(() => { itemsRef.current = items; }, [items]);
 
-  useEffect(() => {
-    nextId.current = items.reduce((m, i) => Math.max(m, i.id + 1), 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Timestamp of this tab's most recent own write to the queue, so an
+  // incoming storage event can tell "this queue snapshot is older than
+  // what I already know" apart from "this is a genuine update from
+  // another tab" — used to keep a stale remote merge from overriding a
+  // clear this tab just performed.
+  const lastLocalWriteRef = useRef(0);
 
   const notify = useCallback(msg => {
     setToast(msg);
@@ -151,7 +135,10 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 4200);
   }, []);
 
-  useEffect(() => persistItems(items, notify), [items, notify]);
+  useEffect(() => {
+    lastLocalWriteRef.current = Date.now();
+    persistItems(items, notify);
+  }, [items, notify]);
 
   /* Cross-tab sync. The browser's `storage` event fires in every tab
      except the one that wrote, so this can only ever react to a
@@ -163,15 +150,38 @@ export default function App() {
      tab can't be overwritten by a stale snapshot from another. */
   useEffect(() => {
     const onStorage = e => {
-      if (!e.key || e.newValue == null) return;
+      if (!e.key) return;
 
-      if (e.key === KEYS.items) {
+      // A cleared queue writes an empty array to KEYS.items and a fresh
+      // timestamp to KEYS.itemsClearedAt. Without checking the latter,
+      // a tab that still has its pre-clear items open would merge them
+      // right back in as "local-only, keep it" and write them back —
+      // resurrecting a queue the operator just deleted. Any remote
+      // items snapshot older than the last known clear is ignored.
+      if (e.key === KEYS.items || e.key === KEYS.itemsClearedAt) {
+        const clearedAt = readJson(KEYS.itemsClearedAt, 0);
+        if (e.key === KEYS.itemsClearedAt) {
+          setItems(prev => (prev.length ? [] : prev));
+          return;
+        }
+        if (e.newValue == null) return;
         let incoming;
         try { incoming = JSON.parse(e.newValue); } catch { return; }
         if (!Array.isArray(incoming)) return;
-        setItems(prev => mergeRemoteItems(prev, incoming));
+        const heartbeats = readJson(KEYS.runningHeartbeat, {});
+        setItems(prev => {
+          if (clearedAt && clearedAt >= lastLocalWriteRef.current) return prev.length ? [] : prev;
+          const next = mergeRemoteItems(prev, incoming, heartbeats);
+          // Skip the update entirely when nothing actually changed —
+          // this is what stops two tabs from volleying writes back and
+          // forth: a merge that reproduces the current state never
+          // triggers a re-render or a persist, so it never triggers the
+          // other tab's storage listener either.
+          return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+        });
         return;
       }
+      if (e.newValue == null) return;
       if (e.key === KEYS.settings) {
         try { setSettings(JSON.parse(e.newValue)); } catch { /* ignore malformed */ }
         return;
@@ -226,6 +236,19 @@ export default function App() {
     updateItem(item.id, { status: "running", log: [] });
     setActiveId(item.id);
 
+    // Refreshed periodically while this item runs, so another tab can
+    // tell "actively being worked on right now" apart from "left
+    // running by a tab that's since closed or crashed" — see
+    // mergeRemoteItems / isHeartbeatFresh and the stillQueued filter in
+    // run() below, both of which read this same key.
+    const beat = () => {
+      const hb = readJson(KEYS.runningHeartbeat, {});
+      hb[item.id] = Date.now();
+      writeJson(KEYS.runningHeartbeat, hb);
+    };
+    beat();
+    const heartbeatTimer = setInterval(beat, 15000);
+
     const log = [];
     const onNote = e => {
       if (e.spentCredit) { bumpTavily(); return; }
@@ -254,6 +277,11 @@ export default function App() {
         errorModel: err._model || null
       });
       if (err._fatal) throw err;
+    } finally {
+      clearInterval(heartbeatTimer);
+      const hb = readJson(KEYS.runningHeartbeat, {});
+      delete hb[item.id];
+      writeJson(KEYS.runningHeartbeat, hb);
     }
   }, [settings, updateItem, bumpTally, bumpTavily]);
 
@@ -318,7 +346,16 @@ export default function App() {
     }
 
     const maxResults = settings.tavilyResults || 6;
-    const stillQueued = items.filter(i => i.status === "queued");
+    // Excludes any item another live tab is actively researching right
+    // now (a fresh heartbeat), so two tabs can't both spend a search
+    // and a generation call on the same part at the same time. An item
+    // whose heartbeat has gone stale (that tab closed or crashed
+    // mid-run) is still picked up here — the merge already downgrades
+    // a stale "running" to "queued" once it's synced, but this check
+    // also covers items this tab hasn't received a sync for yet.
+    const heartbeats = readJson(KEYS.runningHeartbeat, {});
+    const stillQueued = items.filter(i =>
+      i.status === "queued" || (i.status === "running" && !isHeartbeatFresh(i.id, heartbeats)));
 
     const parsed = parsePartNumbers(parts);
     const dropped = oversizedPartCount(parts);
@@ -359,7 +396,7 @@ export default function App() {
     }
 
     const batch = fresh.map(p => ({
-      id: nextId.current++, part: p, status: "queued",
+      id: makeItemId(), part: p, status: "queued",
       data: null, error: null, log: [], opts: { ...opts }
     }));
 
@@ -371,6 +408,8 @@ export default function App() {
   }, [running, settings, parts, brand, condition, items, tavilyUsed, runQueued, notify]);
 
   const clearQueue = useCallback(() => {
+    lastLocalWriteRef.current = Date.now();
+    writeJson(KEYS.itemsClearedAt, lastLocalWriteRef.current);
     setItems([]);
     setActiveId(null);
     store.del(KEYS.items);
